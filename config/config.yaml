@@ -1,0 +1,92 @@
+# MyFiles to Markdown Configuration
+
+# Ollama Settings
+ollama:
+  host: "http://host.docker.internal:11434"
+  model: "llama3.2:latest"  # Change to your preferred model
+  timeout: 300
+  temperature: 0.7
+
+# Input/Output Settings
+paths:
+  input_dir: "/app/input"
+  output_dir: "/app/output"
+  log_dir: "/app/logs"
+
+# Processing Settings
+processing:
+  # File types to process (Docling-supported + new formats)
+  supported_formats:
+    - pdf
+    - docx
+    - pptx
+    - html
+    - htm
+    - csv
+    - xlsx
+    - xls
+    - png
+    - jpg
+    - jpeg
+    - tiff
+    - tif
+    - bmp
+    - gif
+    - webp
+    - ipynb
+    - eml
+    - msg
+    - mbox
+  
+  # Docling settings
+  docling:
+    table_mode: "fast"  # "fast" (default) or "accurate" - accurate is much slower but better for complex tables
+    large_pdf_page_threshold: 30  # PDFs above this use fast table mode
+    xlarge_pdf_page_threshold: 80  # PDFs above this skip table structure entirely (text-only extraction)
+
+  # CSV-specific settings
+  csv:
+    max_rows: 1000  # Max rows to include in markdown output
+
+  # XLSX-specific settings
+  xlsx:
+    max_rows: 1000  # Max rows per sheet to prevent huge files
+    include_formulas: false
+  
+  # OCR Settings
+  ocr:
+    enabled: true
+    language: "eng"
+    min_confidence: 60
+  
+  # Image Settings
+  images:
+    extract: true
+    max_size_mb: 10
+    describe_failed_ocr: true
+  
+  # AI Enhancement
+  ai:
+    generate_summary: true
+    generate_tags: true
+    max_tags: 10
+    describe_images: true
+
+# Obsidian Settings
+obsidian:
+  # Frontmatter settings
+  frontmatter:
+    add_source_file: true
+    add_created_date: true
+    add_processed_date: true
+    add_ai_summary: true
+    add_ai_tags: true
+  
+  # File naming
+  preserve_filename: true
+  sanitize_filenames: true
+  
+  # Attachments
+  attachments_folder: "attachments"
+  embed_images: true
+

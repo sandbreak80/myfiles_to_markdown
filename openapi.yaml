@@ -1,0 +1,345 @@
+openapi: 3.1.0
+info:
+  title: MyFiles to Markdown API
+  description: |
+    Convert documents to Obsidian-compatible markdown with optional AI enhancement
+    (summaries, tags, image descriptions) powered by local Ollama.
+  version: 1.3.0
+  contact:
+servers:
+  - url: http://localhost:3143
+    description: Local development
+
+paths:
+  /api/convert:
+    post:
+      operationId: convertFile
+      summary: Synchronous file conversion
+      description: |
+        Upload a file, convert it to markdown, and return the result in a single request.
+        Best for n8n and automation workflows. Server-side timeout is 5 minutes.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The document file to convert
+                ai_enhancement:
+                  type: string
+                  enum: ["true", "false"]
+                  default: "true"
+                  description: Enable AI summaries, tags, and descriptions
+                ai_image_processing:
+                  type: string
+                  enum: ["true", "false"]
+                  default: "true"
+                  description: Enable AI vision for image descriptions
+                output_format:
+                  type: string
+                  enum: [markdown, json]
+                  default: markdown
+                  description: Response format
+      responses:
+        "200":
+          description: Conversion successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertResult"
+            text/markdown:
+              schema:
+                type: string
+        "400":
+          description: No file provided or invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: File exceeds 500 MB limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Unsupported file format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnsupportedFormatError"
+        "500":
+          description: Conversion failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: Conversion timed out (5 min limit)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/upload:
+    post:
+      operationId: uploadFiles
+      summary: Async file upload
+      description: |
+        Upload one or more files for background processing.
+        Returns immediately with job IDs for polling.
+        Unsupported file formats are skipped and listed in the response.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: ["files[]"]
+              properties:
+                files[]:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: One or more files to convert
+                ai_enhancement:
+                  type: string
+                  enum: ["true", "false"]
+                  default: "true"
+                ai_image_processing:
+                  type: string
+                  enum: ["true", "false"]
+                  default: "true"
+      responses:
+        "200":
+          description: Upload accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResult"
+        "400":
+          description: No files provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/jobs:
+    get:
+      operationId: listJobs
+      summary: List all jobs
+      responses:
+        "200":
+          description: Job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Job"
+
+  /api/jobs/{job_id}:
+    get:
+      operationId: getJob
+      summary: Get job status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Job details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/download/{job_id}:
+    get:
+      operationId: downloadFile
+      summary: Download converted markdown
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Markdown file download
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "400":
+          description: Job not completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Job or file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/stats:
+    get:
+      operationId: getStats
+      summary: Processing statistics
+      responses:
+        "200":
+          description: Aggregate job counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+components:
+  schemas:
+    ConvertResult:
+      type: object
+      properties:
+        filename:
+          type: string
+          example: report.pdf
+        output_filename:
+          type: string
+          example: report.md
+        markdown:
+          type: string
+          description: Full markdown content with YAML frontmatter
+        status:
+          type: string
+          enum: [completed]
+
+    UploadResult:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Uploaded 2 file(s)"
+        job_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        skipped:
+          type: array
+          items:
+            type: string
+          description: Filenames skipped due to unsupported format
+        skipped_reason:
+          type: string
+          example: unsupported format
+
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        output_file:
+          type: string
+        output_filename:
+          type: string
+        error:
+          type: string
+          description: Error message (only present when status is failed)
+        ai_enhancement:
+          type: boolean
+        ai_image_processing:
+          type: boolean
+
+    Stats:
+      type: object
+      properties:
+        total:
+          type: integer
+        queued:
+          type: integer
+        processing:
+          type: integer
+        completed:
+          type: integer
+        failed:
+          type: integer
+
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        service:
+          type: string
+          example: myfiles-to-markdown
+        version:
+          type: string
+          example: 1.3.0
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        filename:
+          type: string
+
+    UnsupportedFormatError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Unsupported file format: .mp4"
+        supported_formats:
+          type: array
+          items:
+            type: string
+          example: [pdf, docx, pptx, html, htm, csv, xlsx, xls, png, jpg, jpeg, tiff, tif, bmp, gif, webp, ipynb, eml, msg, mbox]

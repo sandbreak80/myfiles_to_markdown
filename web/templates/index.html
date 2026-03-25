@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyFiles to Markdown - Document Converter</title>
+    <link rel="stylesheet" href="/static/css/styles.css?v=2.1.0">
+    <link rel="stylesheet" href="/static/css/toggles.css?v=2.1.0">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>MyFiles to Markdown</h1>
+            <p class="tagline">AI-Enhanced Document Conversion for RAG/LLM</p>
+        </header>
+
+        <main>
+            <section class="upload-section">
+                <div class="ai-settings">
+                    <h3>AI Enhancement Settings</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="aiEnhancementToggle" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <div class="setting-label">
+                                <strong>AI Enhancement</strong>
+                                <small>Generate summaries, tags, and descriptions</small>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="aiImageToggle" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <div class="setting-label">
+                                <strong>AI Image Processing</strong>
+                                <small>Use vision model to describe images</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">Upload</div>
+                    <h2>Drop files here or click to browse</h2>
+                    <p>PDF, DOCX, PPTX, CSV, XLSX, Email, Images, Jupyter Notebooks</p>
+                    <p class="file-size-hint">Max 500MB per file</p>
+                    <input type="file" id="fileInput" multiple accept=".pdf,.docx,.pptx,.xlsx,.xls,.csv,.eml,.msg,.mbox,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp,.ipynb,.html,.htm" hidden>
+                </div>
+
+                <div id="statusArea" class="status-area" style="display:none;">
+                    <div id="statusMessage" class="status-message"></div>
+                    <div id="downloadLinks" class="download-links"></div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>v2.1.0 | <a href="/docs">API Docs</a> | <a href="https://github.com/sandbreak80/myfiles_to_markdown" target="_blank">GitHub</a></p>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js?v=2.1.0"></script>
+</body>
+</html>

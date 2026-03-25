@@ -1,0 +1,13 @@
+[run]
+source = src
+omit =
+    src/converters/pdf_converter.py
+    src/converters/pptx_converter.py
+    src/converters/docx_converter.py
+    src/converters/email_converter.py
+    src/converters/jupyter_converter.py
+    src/converters/pptx_image_extractor.py
+    src/main.py
+
+[report]
+show_missing = true

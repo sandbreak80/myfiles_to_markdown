@@ -1,0 +1,41 @@
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!requirements.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Application data
+input/
+output/
+logs/
+
+# Docker
+docker-compose.yml
+Dockerfile
+
+# Scripts
+scripts/
+
+# Other
+.DS_Store
+*.log
+.env
+

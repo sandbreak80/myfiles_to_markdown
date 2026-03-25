@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Docker
+.docker/
+*.log
+
+# Project specific
+# Keep input/ and output/ structure but ignore contents
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+!output/attachments/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Uploads (user data, not committed)
+uploads/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Test files
+test_output/
+*.test
+
+# Ollama models (users download their own)
+models/
+
+# Documentation build
+docs/_build/
+site/

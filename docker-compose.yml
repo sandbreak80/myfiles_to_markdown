@@ -1,0 +1,54 @@
+services:
+  # Document converter application
+  converter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: myfiles_converter
+    runtime: nvidia
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Web UI for document conversion
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: myfiles_web
+    command: python src/web_app.py
+    runtime: nvidia
+    network_mode: host
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - PYTHONUNBUFFERED=1
+      - APP_PORT=3143
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+

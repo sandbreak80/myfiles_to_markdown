@@ -31,8 +31,9 @@ class CsvConverter:
         logger.info(f"Converting CSV: {file_path.name}")
         
         try:
-            # Read CSV with pandas
-            df = pd.read_csv(file_path)
+            # Read CSV with pandas — keep_default_na=False preserves literal
+            # strings like "NULL", "NA", "NaN" instead of converting to NaN
+            df = pd.read_csv(file_path, keep_default_na=False)
 
             # Get basic stats
             total_rows, cols = df.shape

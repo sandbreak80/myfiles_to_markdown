@@ -1,5 +1,6 @@
 """Unified document converter using Docling."""
 
+import os
 from pathlib import Path
 from typing import Dict, List
 import zipfile
@@ -27,6 +28,14 @@ class DoclingUnifiedConverter(BaseConverter):
             config: Processing configuration dictionary
         """
         super().__init__(config)
+
+        # Force Docling to use CPU so Ollama gets full GPU VRAM for AI inference.
+        # Without this, Docling and Ollama fight for the same 12GB GPU and cause
+        # CUDA OOM errors on concurrent requests.
+        import torch
+        if torch.cuda.is_available():
+            os.environ.setdefault('DOCLING_DEVICE', 'cpu')
+            logger.info("Docling forced to CPU to preserve GPU VRAM for Ollama AI")
 
         # Page thresholds for mode selection
         self.large_pdf_threshold = config.get('docling', {}).get('large_pdf_page_threshold', 30)

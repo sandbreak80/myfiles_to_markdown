@@ -1,12 +1,14 @@
 {
   "workflows": [
     {
-      "name": "1. Simple Document Conversion",
-      "description": "Upload a single file via webhook, convert to markdown, return result. Includes health check, error handling, and retry on server busy.",
+      "name": "1. Convert Single Document to Markdown",
+      "description": "The simplest use case: receive a document via webhook, send it to MyFiles to Markdown API, get Obsidian-compatible markdown back with AI-generated summaries and tags. Includes health check and error handling.",
+      "use_case": "Integrate document conversion into any existing n8n workflow. Call this as a sub-workflow whenever you need to convert a file to markdown.",
+      "api_endpoints_used": ["GET /health", "POST /api/convert"],
       "nodes": [
         {
           "parameters": { "httpMethod": "POST", "path": "convert", "responseMode": "lastNode" },
-          "name": "Webhook",
+          "name": "Receive Document",
           "type": "n8n-nodes-base.webhook",
           "position": [200, 300]
         },
@@ -16,7 +18,7 @@
             "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/health",
             "options": { "timeout": 5000 }
           },
-          "name": "Health Check",
+          "name": "Check MD API Health",
           "type": "n8n-nodes-base.httpRequest",
           "position": [400, 300],
           "continueOnFail": true
@@ -25,7 +27,7 @@
           "parameters": {
             "conditions": { "string": [{ "value1": "={{ $json.status }}", "value2": "healthy" }] }
           },
-          "name": "API Available?",
+          "name": "MD API Up?",
           "type": "n8n-nodes-base.if",
           "position": [600, 300]
         },
@@ -47,13 +49,14 @@
           "name": "Convert to Markdown",
           "type": "n8n-nodes-base.httpRequest",
           "position": [800, 200],
-          "continueOnFail": true
+          "continueOnFail": true,
+          "notes": "POST /api/convert — sends file, gets back JSON with: filename, output_filename, markdown (full text with YAML frontmatter), status. AI enhancement adds summary, tags, and description to the frontmatter. Set ai_enhancement=false for faster conversion without AI. Timeout 600s matches server-side max."
         },
         {
           "parameters": {
             "conditions": { "string": [{ "value1": "={{ $json.status }}", "value2": "completed" }] }
           },
-          "name": "Success?",
+          "name": "Conversion OK?",
           "type": "n8n-nodes-base.if",
           "position": [1000, 200]
         },
@@ -62,14 +65,14 @@
             "respondWith": "json",
             "responseBody": "={{ JSON.stringify({ filename: $json.filename, output_filename: $json.output_filename, markdown: $json.markdown, status: 'completed' }) }}"
           },
-          "name": "Return Result",
+          "name": "Return Markdown",
           "type": "n8n-nodes-base.respondToWebhook",
           "position": [1200, 100]
         },
         {
           "parameters": {
             "respondWith": "json",
-            "responseBody": "={{ JSON.stringify({ error: $json.error || $json.detail?.error || 'Conversion failed', status: 'failed' }) }}",
+            "responseBody": "={{ JSON.stringify({ error: $json.error || $json.detail?.error || 'Conversion failed — check /api/debug/recent for details', status: 'failed' }) }}",
             "responseCode": 500
           },
           "name": "Return Error",
@@ -79,39 +82,41 @@
         {
           "parameters": {
             "respondWith": "json",
-            "responseBody": "{\"error\": \"API is not available\", \"status\": \"unavailable\"}",
+            "responseBody": "{\"error\": \"MyFiles to Markdown API is not reachable. Check the container with: docker compose logs web\", \"status\": \"unavailable\"}",
             "responseCode": 503
           },
-          "name": "API Unavailable",
+          "name": "API Down Error",
           "type": "n8n-nodes-base.respondToWebhook",
           "position": [800, 400]
         }
       ],
       "connections": {
-        "Webhook": { "main": [[{ "node": "Health Check", "type": "main", "index": 0 }]] },
-        "Health Check": { "main": [[{ "node": "API Available?", "type": "main", "index": 0 }]] },
-        "API Available?": { "main": [
+        "Receive Document": { "main": [[{ "node": "Check MD API Health", "type": "main", "index": 0 }]] },
+        "Check MD API Health": { "main": [[{ "node": "MD API Up?", "type": "main", "index": 0 }]] },
+        "MD API Up?": { "main": [
           [{ "node": "Convert to Markdown", "type": "main", "index": 0 }],
-          [{ "node": "API Unavailable", "type": "main", "index": 0 }]
+          [{ "node": "API Down Error", "type": "main", "index": 0 }]
         ]},
-        "Convert to Markdown": { "main": [[{ "node": "Success?", "type": "main", "index": 0 }]] },
-        "Success?": { "main": [
-          [{ "node": "Return Result", "type": "main", "index": 0 }],
+        "Convert to Markdown": { "main": [[{ "node": "Conversion OK?", "type": "main", "index": 0 }]] },
+        "Conversion OK?": { "main": [
+          [{ "node": "Return Markdown", "type": "main", "index": 0 }],
           [{ "node": "Return Error", "type": "main", "index": 0 }]
         ]}
       }
     },
 
     {
-      "name": "2. Email Attachment Processor",
-      "description": "Monitor Gmail for attachments. Filter supported formats, convert with retry, save to Drive, notify on failure.",
+      "name": "2. Email to Obsidian Vault",
+      "description": "Automatically convert email attachments (PDF, DOCX, PPTX, XLSX) to Obsidian-compatible markdown and save to a Google Drive folder synced with your Obsidian vault. AI generates summaries and tags for each document.",
+      "use_case": "Build a personal knowledge base from email attachments. Every document you receive becomes a searchable, tagged markdown note in Obsidian.",
+      "api_endpoints_used": ["POST /api/convert"],
       "nodes": [
         {
           "parameters": {
             "pollTimes": { "item": [{ "mode": "everyMinute" }] },
             "filters": { "hasAttachment": true }
           },
-          "name": "Gmail Trigger",
+          "name": "New Email with Attachment",
           "type": "n8n-nodes-base.gmailTrigger",
           "position": [200, 300]
         },
@@ -123,11 +128,12 @@
         },
         {
           "parameters": {
-            "conditions": { "string": [{ "value1": "={{ $json.fileName }}", "operation": "regex", "value2": "\\.(pdf|docx|pptx|xlsx|csv|html|png|jpg|jpeg)$" }] }
+            "conditions": { "string": [{ "value1": "={{ $json.fileName }}", "operation": "regex", "value2": "\\.(pdf|docx|pptx|xlsx|csv|html|png|jpg|eml)$" }] }
           },
-          "name": "Supported Format?",
+          "name": "Supported by MD API?",
           "type": "n8n-nodes-base.if",
-          "position": [600, 300]
+          "position": [600, 300],
+          "notes": "MyFiles to Markdown supports: pdf, docx, pptx, html, csv, xlsx, xls, png, jpg, jpeg, tiff, bmp, gif, webp, ipynb, eml, msg, mbox"
         },
         {
           "parameters": {
@@ -144,70 +150,58 @@
             },
             "options": { "timeout": 600000, "retry": { "maxTries": 2, "waitBetweenTries": 10000 } }
           },
-          "name": "Convert to Markdown",
+          "name": "Convert with AI Summaries",
           "type": "n8n-nodes-base.httpRequest",
           "position": [800, 200],
-          "continueOnFail": true
+          "continueOnFail": true,
+          "notes": "The markdown output includes YAML frontmatter with: title, source_type, summary (AI), description (AI), tags (AI). This is Obsidian-compatible — tags show up in Obsidian's tag pane, summary appears in Properties."
         },
         {
           "parameters": {
             "conditions": { "string": [{ "value1": "={{ $json.status }}", "value2": "completed" }] }
           },
-          "name": "Converted OK?",
+          "name": "Converted?",
           "type": "n8n-nodes-base.if",
           "position": [1000, 200]
         },
         {
           "parameters": {
             "operation": "upload",
-            "folderId": "={{ $env.GDRIVE_OUTPUT_FOLDER || 'root' }}",
+            "folderId": "={{ $env.OBSIDIAN_VAULT_FOLDER }}",
             "name": "={{ $json.output_filename }}",
             "binaryData": false,
             "fileContent": "={{ $json.markdown }}"
           },
-          "name": "Save to Drive",
+          "name": "Save to Obsidian Vault",
           "type": "n8n-nodes-base.googleDrive",
-          "position": [1200, 100]
-        },
-        {
-          "parameters": {
-            "channel": "={{ $env.SLACK_ALERT_CHANNEL || '#alerts' }}",
-            "text": "={{ 'Failed to convert email attachment: ' + ($json.filename || 'unknown') + ' - Error: ' + ($json.error || $json.detail?.error || 'unknown') }}"
-          },
-          "name": "Alert on Failure",
-          "type": "n8n-nodes-base.slack",
-          "position": [1200, 350],
-          "disabled": true,
-          "notes": "Enable and configure Slack credentials for failure alerts"
+          "position": [1200, 100],
+          "notes": "Point OBSIDIAN_VAULT_FOLDER to a Google Drive folder synced with your Obsidian vault. The .md files will appear as notes with AI summaries and tags."
         }
       ],
       "connections": {
-        "Gmail Trigger": { "main": [[{ "node": "Get Attachments", "type": "main", "index": 0 }]] },
-        "Get Attachments": { "main": [[{ "node": "Supported Format?", "type": "main", "index": 0 }]] },
-        "Supported Format?": { "main": [[{ "node": "Convert to Markdown", "type": "main", "index": 0 }]] },
-        "Convert to Markdown": { "main": [[{ "node": "Converted OK?", "type": "main", "index": 0 }]] },
-        "Converted OK?": { "main": [
-          [{ "node": "Save to Drive", "type": "main", "index": 0 }],
-          [{ "node": "Alert on Failure", "type": "main", "index": 0 }]
-        ]}
+        "New Email with Attachment": { "main": [[{ "node": "Get Attachments", "type": "main", "index": 0 }]] },
+        "Get Attachments": { "main": [[{ "node": "Supported by MD API?", "type": "main", "index": 0 }]] },
+        "Supported by MD API?": { "main": [[{ "node": "Convert with AI Summaries", "type": "main", "index": 0 }]] },
+        "Convert with AI Summaries": { "main": [[{ "node": "Converted?", "type": "main", "index": 0 }]] },
+        "Converted?": { "main": [[{ "node": "Save to Obsidian Vault", "type": "main", "index": 0 }]] }
       }
     },
 
     {
-      "name": "3. RAG Knowledge Base Builder",
-      "description": "Bulk-convert a Drive folder into a vector database. Deduplicates by filename, extracts AI metadata, handles errors per file without killing the batch.",
+      "name": "3. Build RAG Knowledge Base from Documents",
+      "description": "Scan a Google Drive folder, convert every document to markdown with AI summaries and tags, then store in a vector database for retrieval-augmented generation (RAG). Uses upsert for deduplication.",
+      "use_case": "Feed your company's documents into an AI chatbot. Convert PDFs, presentations, and spreadsheets into searchable, chunked markdown with AI-generated metadata.",
+      "api_endpoints_used": ["POST /api/convert"],
       "nodes": [
         {
-          "parameters": {
-            "rule": { "interval": [{ "triggerAtHour": 2 }] }
-          },
+          "parameters": { "rule": { "interval": [{ "triggerAtHour": 2 }] } },
           "name": "Daily 2 AM",
           "type": "n8n-nodes-base.scheduleTrigger",
           "position": [200, 300]
         },
         {
-          "parameters": { "operation": "list", "folderId": "={{ $env.GDRIVE_INPUT_FOLDER }}" },
-          "name": "List Drive Files",
+          "parameters": { "operation": "list", "folderId": "={{ $env.RAG_SOURCE_FOLDER }}" },
+          "name": "List Documents",
           "type": "n8n-nodes-base.googleDrive",
           "position": [400, 300]
         },
@@ -215,13 +209,13 @@
           "parameters": {
             "conditions": { "string": [{ "value1": "={{ $json.name }}", "operation": "regex", "value2": "\\.(pdf|docx|pptx|xlsx|csv|html)$" }] }
           },
-          "name": "Filter Supported",
+          "name": "Filter Convertible",
           "type": "n8n-nodes-base.if",
           "position": [600, 300]
         },
         {
           "parameters": { "operation": "download", "fileId": "={{ $json.id }}" },
-          "name": "Download File",
+          "name": "Download",
           "type": "n8n-nodes-base.googleDrive",
           "position": [800, 300]
         },
@@ -238,37 +232,25 @@
                 { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
               ]
             },
-            "options": { "timeout": 600000, "retry": { "maxTries": 2, "waitBetweenTries": 15000 },
-              "batching": { "batch": { "batchSize": 1, "batchInterval": 2000 } }
+            "options": {
+              "timeout": 600000,
+              "retry": { "maxTries": 2, "waitBetweenTries": 15000 },
+              "batching": { "batch": { "batchSize": 1, "batchInterval": 3000 } }
             }
           },
-          "name": "Convert with AI",
+          "name": "Convert to Markdown + AI",
           "type": "n8n-nodes-base.httpRequest",
           "position": [1000, 300],
-          "continueOnFail": true
+          "continueOnFail": true,
+          "notes": "AI enhancement generates: summary (100 words), description (1 sentence), tags (up to 10 hyphenated keywords). These are embedded in the YAML frontmatter. Batching: 1 file at a time with 3s gap to respect the API's 3-concurrent-conversion limit."
         },
         {
           "parameters": {
             "conditions": { "string": [{ "value1": "={{ $json.status }}", "value2": "completed" }] }
           },
-          "name": "Converted?",
+          "name": "Success?",
           "type": "n8n-nodes-base.if",
           "position": [1200, 300]
-        },
-        {
-          "parameters": {
-            "mode": "manual",
-            "assignments": {
-              "assignments": [
-                { "name": "id", "value": "={{ $json.filename }}", "type": "string" },
-                { "name": "content", "value": "={{ $json.markdown }}", "type": "string" },
-                { "name": "filename", "value": "={{ $json.filename }}", "type": "string" }
-              ]
-            }
-          },
-          "name": "Prepare for Vector DB",
-          "type": "n8n-nodes-base.set",
-          "position": [1400, 200]
         },
         {
           "parameters": {
@@ -277,54 +259,55 @@
             "sendBody": true,
             "bodyParameters": {
               "parameters": [
-                { "name": "id", "value": "={{ $json.id }}" },
-                { "name": "content", "value": "={{ $json.content }}" },
-                { "name": "metadata", "value": "={{ JSON.stringify({ source: $json.filename }) }}" }
+                { "name": "id", "value": "={{ $json.filename }}" },
+                { "name": "content", "value": "={{ $json.markdown }}" },
+                { "name": "metadata", "value": "={{ JSON.stringify({ source: $json.filename, output_name: $json.output_filename }) }}" }
               ]
             },
             "options": { "timeout": 30000 }
           },
           "name": "Upsert to Vector DB",
           "type": "n8n-nodes-base.httpRequest",
-          "position": [1600, 200],
+          "position": [1400, 200],
           "continueOnFail": true,
-          "notes": "Uses upsert — safe to re-run without duplicates"
+          "notes": "Upsert by filename — safe to re-run without duplicates. The markdown includes the AI summary and tags in frontmatter, which the vector DB can use for metadata filtering."
         }
       ],
       "connections": {
-        "Daily 2 AM": { "main": [[{ "node": "List Drive Files", "type": "main", "index": 0 }]] },
-        "List Drive Files": { "main": [[{ "node": "Filter Supported", "type": "main", "index": 0 }]] },
-        "Filter Supported": { "main": [[{ "node": "Download File", "type": "main", "index": 0 }]] },
-        "Download File": { "main": [[{ "node": "Convert with AI", "type": "main", "index": 0 }]] },
-        "Convert with AI": { "main": [[{ "node": "Converted?", "type": "main", "index": 0 }]] },
-        "Converted?": { "main": [[{ "node": "Prepare for Vector DB", "type": "main", "index": 0 }]] },
-        "Prepare for Vector DB": { "main": [[{ "node": "Upsert to Vector DB", "type": "main", "index": 0 }]] }
+        "Daily 2 AM": { "main": [[{ "node": "List Documents", "type": "main", "index": 0 }]] },
+        "List Documents": { "main": [[{ "node": "Filter Convertible", "type": "main", "index": 0 }]] },
+        "Filter Convertible": { "main": [[{ "node": "Download", "type": "main", "index": 0 }]] },
+        "Download": { "main": [[{ "node": "Convert to Markdown + AI", "type": "main", "index": 0 }]] },
+        "Convert to Markdown + AI": { "main": [[{ "node": "Success?", "type": "main", "index": 0 }]] },
+        "Success?": { "main": [[{ "node": "Upsert to Vector DB", "type": "main", "index": 0 }]] }
       }
     },
 
     {
       "name": "4. Slack Document Bot",
-      "description": "Users share files in Slack. Bot converts and replies with AI summary. Responds immediately to avoid Slack timeout, processes async.",
+      "description": "Users share files in a Slack channel. Bot immediately acknowledges (avoids Slack's 3s timeout), converts the document, and replies with the AI-generated summary and tag list.",
+      "use_case": "Team shares sales decks, reports, and spreadsheets in Slack. Bot auto-converts and posts a summary so people don't have to open the file to know what's in it.",
+      "api_endpoints_used": ["POST /api/convert"],
       "nodes": [
         {
           "parameters": { "event": "file_shared", "channel": "={{ $env.SLACK_CHANNEL }}" },
-          "name": "Slack File Trigger",
+          "name": "File Shared in Slack",
           "type": "n8n-nodes-base.slackTrigger",
           "position": [200, 300]
         },
         {
           "parameters": {
             "channel": "={{ $env.SLACK_CHANNEL }}",
-            "text": "={{ 'Converting ' + ($json.file?.name || 'file') + '...' }}"
+            "text": "={{ ':hourglass: Converting `' + ($json.file?.name || 'file') + '` to markdown...' }}"
           },
           "name": "Ack in Slack",
           "type": "n8n-nodes-base.slack",
           "position": [400, 300],
-          "notes": "Immediate ack prevents Slack 3-second timeout"
+          "notes": "Send immediately — Slack kills webhooks after 3 seconds. Conversion happens after this ack."
         },
         {
           "parameters": { "operation": "get", "fileId": "={{ $json.file_id }}" },
-          "name": "Download File",
+          "name": "Download from Slack",
           "type": "n8n-nodes-base.slack",
           "position": [600, 300]
         },
@@ -343,7 +326,7 @@
             },
             "options": { "timeout": 600000, "retry": { "maxTries": 2, "waitBetweenTries": 5000 } }
           },
-          "name": "Convert Document",
+          "name": "Convert with AI",
           "type": "n8n-nodes-base.httpRequest",
           "position": [800, 300],
           "continueOnFail": true
@@ -352,61 +335,63 @@
           "parameters": {
             "conditions": { "string": [{ "value1": "={{ $json.status }}", "value2": "completed" }] }
           },
-          "name": "Success?",
+          "name": "Converted?",
           "type": "n8n-nodes-base.if",
           "position": [1000, 300]
         },
         {
           "parameters": {
             "channel": "={{ $env.SLACK_CHANNEL }}",
-            "text": "={{ 'Converted: *' + $json.filename + '*\\nSize: ' + $json.markdown.length + ' chars\\n\\n_Use /api/convert to get the full markdown._' }}"
+            "text": "={{ ':white_check_mark: *' + $json.filename + '* converted to markdown (' + $json.markdown.length + ' chars)\\n\\nThe output includes AI-generated summary, description, and tags in Obsidian-compatible YAML frontmatter.' }}"
           },
-          "name": "Reply Success",
+          "name": "Post Result",
           "type": "n8n-nodes-base.slack",
           "position": [1200, 200]
         },
         {
           "parameters": {
             "channel": "={{ $env.SLACK_CHANNEL }}",
-            "text": "={{ 'Failed to convert file: ' + ($json.error || $json.detail?.error || 'unknown error') }}"
+            "text": "={{ ':x: Failed to convert `' + ($json.filename || 'file') + '`: ' + ($json.error || $json.detail?.error || 'unknown error') + '\\n\\nSupported formats: PDF, DOCX, PPTX, XLSX, CSV, HTML, images, email, Jupyter notebooks' }}"
           },
-          "name": "Reply Error",
+          "name": "Post Error",
           "type": "n8n-nodes-base.slack",
           "position": [1200, 400]
         }
       ],
       "connections": {
-        "Slack File Trigger": { "main": [[{ "node": "Ack in Slack", "type": "main", "index": 0 }]] },
-        "Ack in Slack": { "main": [[{ "node": "Download File", "type": "main", "index": 0 }]] },
-        "Download File": { "main": [[{ "node": "Convert Document", "type": "main", "index": 0 }]] },
-        "Convert Document": { "main": [[{ "node": "Success?", "type": "main", "index": 0 }]] },
-        "Success?": { "main": [
-          [{ "node": "Reply Success", "type": "main", "index": 0 }],
-          [{ "node": "Reply Error", "type": "main", "index": 0 }]
+        "File Shared in Slack": { "main": [[{ "node": "Ack in Slack", "type": "main", "index": 0 }]] },
+        "Ack in Slack": { "main": [[{ "node": "Download from Slack", "type": "main", "index": 0 }]] },
+        "Download from Slack": { "main": [[{ "node": "Convert with AI", "type": "main", "index": 0 }]] },
+        "Convert with AI": { "main": [[{ "node": "Converted?", "type": "main", "index": 0 }]] },
+        "Converted?": { "main": [
+          [{ "node": "Post Result", "type": "main", "index": 0 }],
+          [{ "node": "Post Error", "type": "main", "index": 0 }]
         ]}
       }
     },
 
     {
-      "name": "5. Async Upload with Poll Loop",
-      "description": "For large files: upload async, poll until complete with exponential backoff, then download. Production-grade polling pattern.",
+      "name": "5. Large File Async Conversion with Poll Loop",
+      "description": "For files that take minutes to convert (large PDFs, complex presentations): upload via async endpoint, poll job status with backoff until complete, then download the markdown. Returns 202 immediately to the caller.",
+      "use_case": "Integrate large document conversion into pipelines that can't wait for a sync response. The caller gets an immediate 202 and can check back later, or this workflow handles the polling internally.",
+      "api_endpoints_used": ["POST /api/upload", "GET /api/jobs/{id}", "GET /api/download/{id}"],
       "nodes": [
         {
-          "parameters": { "httpMethod": "POST", "path": "convert-async", "responseMode": "responseNode" },
-          "name": "Webhook",
+          "parameters": { "httpMethod": "POST", "path": "convert-large", "responseMode": "responseNode" },
+          "name": "Receive Large File",
           "type": "n8n-nodes-base.webhook",
           "position": [200, 300]
         },
         {
           "parameters": {
             "respondWith": "json",
-            "responseBody": "{\"message\": \"Upload received, processing started\"}",
+            "responseBody": "{\"message\": \"File received, conversion started. This may take several minutes for large PDFs.\"}",
             "responseCode": 202
           },
-          "name": "Ack Immediately",
+          "name": "Ack 202 Accepted",
           "type": "n8n-nodes-base.respondToWebhook",
           "position": [400, 300],
-          "notes": "Return 202 Accepted immediately to avoid caller timeout"
+          "notes": "Return immediately so the caller doesn't timeout. Cloudflare tunnels timeout at ~100s, Slack at 3s."
         },
         {
           "parameters": {
@@ -422,9 +407,10 @@
             },
             "options": { "timeout": 30000 }
           },
-          "name": "Upload File",
+          "name": "Upload to MD API",
           "type": "n8n-nodes-base.httpRequest",
-          "position": [600, 300]
+          "position": [600, 300],
+          "notes": "POST /api/upload returns immediately with a job_id. The conversion runs in the background on the server."
         },
         {
           "parameters": {
@@ -432,18 +418,17 @@
             "assignments": {
               "assignments": [
                 { "name": "job_id", "value": "={{ $json.job_ids[0] }}", "type": "string" },
-                { "name": "attempts", "value": "0", "type": "number" },
-                { "name": "max_attempts", "value": "60", "type": "number" }
+                { "name": "attempts", "value": "0", "type": "number" }
               ]
             }
           },
-          "name": "Init Poll State",
+          "name": "Init Poll",
           "type": "n8n-nodes-base.set",
           "position": [800, 300]
         },
         {
-          "parameters": { "amount": 5, "unit": "seconds" },
-          "name": "Wait 5s",
+          "parameters": { "amount": 10, "unit": "seconds" },
+          "name": "Wait 10s",
           "type": "n8n-nodes-base.wait",
           "position": [1000, 300]
         },
@@ -453,10 +438,11 @@
             "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/jobs/{{ $json.job_id }}",
             "options": { "timeout": 10000 }
           },
-          "name": "Check Status",
+          "name": "Check Job Status",
           "type": "n8n-nodes-base.httpRequest",
           "position": [1200, 300],
-          "continueOnFail": true
+          "continueOnFail": true,
+          "notes": "GET /api/jobs/{id} returns: id, filename, status (queued/processing/completed/failed), elapsed_seconds, error. Poll until status is 'completed' or 'failed'."
         },
         {
           "parameters": {
@@ -471,56 +457,49 @@
             "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/download/{{ $json.id }}",
             "options": { "timeout": 30000 }
           },
-          "name": "Download Result",
+          "name": "Download Markdown",
           "type": "n8n-nodes-base.httpRequest",
-          "position": [1600, 200]
+          "position": [1600, 200],
+          "notes": "GET /api/download/{id} returns the .md file. Contains YAML frontmatter with title, source_type, summary, tags, etc."
         },
         {
           "parameters": {
-            "conditions": { "number": [{ "value1": "={{ $json.attempts }}", "operation": "smallerEqual", "value2": "={{ $json.max_attempts }}" }] }
+            "conditions": { "number": [{ "value1": "={{ $json.attempts }}", "operation": "smallerEqual", "value2": 60 }] }
           },
-          "name": "Max Attempts?",
+          "name": "Under 60 Attempts?",
           "type": "n8n-nodes-base.if",
           "position": [1600, 400],
-          "notes": "Loop back to Wait if not done and under attempt limit"
+          "notes": "60 attempts x 10s = 10 min max poll time. Matches the server's conversion timeout."
         }
       ],
       "connections": {
-        "Webhook": { "main": [[{ "node": "Ack Immediately", "type": "main", "index": 0 }]] },
-        "Ack Immediately": { "main": [[{ "node": "Upload File", "type": "main", "index": 0 }]] },
-        "Upload File": { "main": [[{ "node": "Init Poll State", "type": "main", "index": 0 }]] },
-        "Init Poll State": { "main": [[{ "node": "Wait 5s", "type": "main", "index": 0 }]] },
-        "Wait 5s": { "main": [[{ "node": "Check Status", "type": "main", "index": 0 }]] },
-        "Check Status": { "main": [[{ "node": "Done?", "type": "main", "index": 0 }]] },
+        "Receive Large File": { "main": [[{ "node": "Ack 202 Accepted", "type": "main", "index": 0 }]] },
+        "Ack 202 Accepted": { "main": [[{ "node": "Upload to MD API", "type": "main", "index": 0 }]] },
+        "Upload to MD API": { "main": [[{ "node": "Init Poll", "type": "main", "index": 0 }]] },
+        "Init Poll": { "main": [[{ "node": "Wait 10s", "type": "main", "index": 0 }]] },
+        "Wait 10s": { "main": [[{ "node": "Check Job Status", "type": "main", "index": 0 }]] },
+        "Check Job Status": { "main": [[{ "node": "Done?", "type": "main", "index": 0 }]] },
         "Done?": { "main": [
-          [{ "node": "Download Result", "type": "main", "index": 0 }],
-          [{ "node": "Max Attempts?", "type": "main", "index": 0 }]
+          [{ "node": "Download Markdown", "type": "main", "index": 0 }],
+          [{ "node": "Under 60 Attempts?", "type": "main", "index": 0 }]
         ]},
-        "Max Attempts?": { "main": [
-          [{ "node": "Wait 5s", "type": "main", "index": 0 }]
+        "Under 60 Attempts?": { "main": [
+          [{ "node": "Wait 10s", "type": "main", "index": 0 }]
         ]}
       }
     },
 
     {
-      "name": "6. Batch Processor with Error Recovery",
-      "description": "Process a folder of mixed documents. Each file handled independently — one failure doesn't kill the batch. Logs results to Google Sheets.",
+      "name": "6. Compare Conversion With and Without AI",
+      "description": "Convert the same document twice: once with AI enhancement (summaries, tags) and once without (fast, raw extraction). Compare the results side by side. Useful for evaluating AI quality or choosing the right mode for a pipeline.",
+      "use_case": "Decide whether to enable AI enhancement for your use case. See exactly what the AI adds vs raw Docling extraction.",
+      "api_endpoints_used": ["POST /api/convert"],
       "nodes": [
         {
-          "parameters": { "httpMethod": "POST", "path": "batch", "responseMode": "responseNode" },
-          "name": "Webhook",
+          "parameters": { "httpMethod": "POST", "path": "compare", "responseMode": "lastNode" },
+          "name": "Upload Document",
           "type": "n8n-nodes-base.webhook",
           "position": [200, 300]
-        },
-        {
-          "parameters": {
-            "respondWith": "json",
-            "responseBody": "{\"message\": \"Batch processing started\"}",
-            "responseCode": 202
-          },
-          "name": "Ack",
-          "type": "n8n-nodes-base.respondToWebhook",
-          "position": [400, 300]
         },
         {
           "parameters": {
@@ -532,66 +511,72 @@
               "parameters": [
                 { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
                 { "parameterType": "formData", "name": "output_format", "value": "json" },
-                { "parameterType": "formData", "name": "ai_enhancement", "value": "={{ $json.fileName?.match(/\\.(pdf|docx|pptx)$/) ? 'true' : 'false' }}" }
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "false" }
               ]
             },
-            "options": {
-              "timeout": 600000,
-              "retry": { "maxTries": 2, "waitBetweenTries": 10000 },
-              "batching": { "batch": { "batchSize": 1, "batchInterval": 3000 } }
-            }
+            "options": { "timeout": 600000 }
           },
-          "name": "Convert Each File",
+          "name": "Convert WITHOUT AI",
           "type": "n8n-nodes-base.httpRequest",
-          "position": [600, 300],
-          "continueOnFail": true,
-          "notes": "continueOnFail=true — one bad file won't stop the batch. AI only for documents, not spreadsheets/images."
+          "position": [500, 200],
+          "notes": "ai_enhancement=false — raw Docling extraction only. Fastest mode. No summary, no tags."
         },
         {
           "parameters": {
-            "mode": "manual",
-            "assignments": {
-              "assignments": [
-                { "name": "filename", "value": "={{ $json.filename || 'unknown' }}", "type": "string" },
-                { "name": "status", "value": "={{ $json.status || 'failed' }}", "type": "string" },
-                { "name": "output_chars", "value": "={{ ($json.markdown || '').length }}", "type": "number" },
-                { "name": "error", "value": "={{ $json.error || $json.detail?.error || '' }}", "type": "string" },
-                { "name": "timestamp", "value": "={{ new Date().toISOString() }}", "type": "string" }
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
               ]
-            }
+            },
+            "options": { "timeout": 600000 }
           },
-          "name": "Log Result",
-          "type": "n8n-nodes-base.set",
+          "name": "Convert WITH AI",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [500, 400],
+          "notes": "ai_enhancement=true — Docling extraction + Ollama AI generates: summary (100 words), description (1 sentence), tags (up to 10). These appear in YAML frontmatter."
+        },
+        {
+          "parameters": { "mode": "combine", "mergeByPosition": true },
+          "name": "Merge Results",
+          "type": "n8n-nodes-base.merge",
           "position": [800, 300]
         },
         {
           "parameters": {
-            "operation": "appendOrUpdate",
-            "sheetName": "ConversionLog",
-            "columns": { "mappingMode": "autoMapInputData" }
+            "respondWith": "json",
+            "responseBody": "={{ JSON.stringify({ without_ai: { chars: $json.markdown?.length || 0, has_summary: $json.markdown?.includes('summary:') || false }, with_ai: { chars: $('Convert WITH AI').json.markdown?.length || 0, has_summary: $('Convert WITH AI').json.markdown?.includes('summary:') || false, has_tags: $('Convert WITH AI').json.markdown?.includes('tags:') || false } }) }}"
           },
-          "name": "Log to Sheet",
-          "type": "n8n-nodes-base.googleSheets",
-          "position": [1000, 300],
-          "disabled": true,
-          "notes": "Enable and configure Google Sheets credentials. Create a sheet with columns: filename, status, output_chars, error, timestamp"
+          "name": "Compare and Return",
+          "type": "n8n-nodes-base.respondToWebhook",
+          "position": [1000, 300]
         }
       ],
       "connections": {
-        "Webhook": { "main": [[{ "node": "Ack", "type": "main", "index": 0 }]] },
-        "Ack": { "main": [[{ "node": "Convert Each File", "type": "main", "index": 0 }]] },
-        "Convert Each File": { "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]] },
-        "Log Result": { "main": [[{ "node": "Log to Sheet", "type": "main", "index": 0 }]] }
+        "Upload Document": { "main": [
+          [{ "node": "Convert WITHOUT AI", "type": "main", "index": 0 }],
+          [{ "node": "Convert WITH AI", "type": "main", "index": 0 }]
+        ]},
+        "Convert WITHOUT AI": { "main": [[{ "node": "Merge Results", "type": "main", "index": 0 }]] },
+        "Convert WITH AI": { "main": [[{ "node": "Merge Results", "type": "main", "index": 1 }]] },
+        "Merge Results": { "main": [[{ "node": "Compare and Return", "type": "main", "index": 0 }]] }
       }
     },
 
     {
-      "name": "7. Health Monitor & Alert",
-      "description": "Run every 5 minutes. Check API health, recent conversion stats, and alert if service is down or error rate is high.",
+      "name": "7. Conversion Health Dashboard",
+      "description": "Monitor the MyFiles to Markdown API every 5 minutes. Pull recent conversion stats, check for errors, and alert on Slack if the service is down or error rate is high.",
+      "use_case": "Ops monitoring. Know immediately when the converter is having issues — before users report it.",
+      "api_endpoints_used": ["GET /health", "GET /api/debug/recent"],
       "nodes": [
         {
           "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] } },
-          "name": "Every 5 Min",
+          "name": "Every 5 Minutes",
           "type": "n8n-nodes-base.scheduleTrigger",
           "position": [200, 300]
         },
@@ -620,29 +605,29 @@
             "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/debug/recent",
             "options": { "timeout": 10000 }
           },
-          "name": "Get Recent Stats",
+          "name": "Get Recent Conversions",
           "type": "n8n-nodes-base.httpRequest",
           "position": [800, 200],
-          "continueOnFail": true
+          "notes": "GET /api/debug/recent returns the last 100 conversions with: filename, format, size, output_size, elapsed seconds, status, timestamp. Use this to track error rates and performance."
         },
         {
           "parameters": {
-            "channel": "={{ $env.SLACK_ALERT_CHANNEL || '#alerts' }}",
-            "text": "MyFiles to Markdown API is DOWN. Health check failed."
+            "channel": "={{ $env.SLACK_ALERT_CHANNEL }}",
+            "text": ":rotating_light: *MyFiles to Markdown API is DOWN*\n\nHealth check failed. Check the container:\n```docker compose logs web```"
           },
-          "name": "Alert: Service Down",
+          "name": "Alert: API Down",
           "type": "n8n-nodes-base.slack",
           "position": [800, 400],
           "disabled": true,
-          "notes": "Enable and configure Slack credentials"
+          "notes": "Enable after configuring Slack credentials"
         }
       ],
       "connections": {
-        "Every 5 Min": { "main": [[{ "node": "Health Check", "type": "main", "index": 0 }]] },
+        "Every 5 Minutes": { "main": [[{ "node": "Health Check", "type": "main", "index": 0 }]] },
         "Health Check": { "main": [[{ "node": "Healthy?", "type": "main", "index": 0 }]] },
         "Healthy?": { "main": [
-          [{ "node": "Get Recent Stats", "type": "main", "index": 0 }],
-          [{ "node": "Alert: Service Down", "type": "main", "index": 0 }]
+          [{ "node": "Get Recent Conversions", "type": "main", "index": 0 }],
+          [{ "node": "Alert: API Down", "type": "main", "index": 0 }]
         ]}
       }
     }
@@ -651,39 +636,60 @@
   "setup": {
     "environment_variables": {
       "MD_API_URL": "Your MyFiles to Markdown API URL (e.g., http://localhost:3143 or https://md.yourdomain.com)",
-      "GDRIVE_INPUT_FOLDER": "Google Drive folder ID for input documents",
-      "GDRIVE_OUTPUT_FOLDER": "Google Drive folder ID for converted markdown output",
+      "OBSIDIAN_VAULT_FOLDER": "Google Drive folder ID synced with your Obsidian vault",
+      "RAG_SOURCE_FOLDER": "Google Drive folder ID containing documents to index",
       "SLACK_CHANNEL": "Slack channel ID for the document bot",
-      "SLACK_ALERT_CHANNEL": "Slack channel ID for health/error alerts",
-      "VECTOR_DB_URL": "Vector database API URL for RAG storage (Qdrant, Pinecone, etc.)",
-      "STAKEHOLDER_EMAILS": "Comma-separated email list for report summaries",
-      "FROM_EMAIL": "Sender email for report notifications"
+      "SLACK_ALERT_CHANNEL": "Slack channel ID for health alerts",
+      "VECTOR_DB_URL": "Vector database API URL (Qdrant, Pinecone, Supabase, etc.)"
     },
-    "best_practices_applied": [
-      "Health check before conversion — verify API is up",
-      "continueOnFail on HTTP nodes — one bad file doesn't kill batch",
-      "Retry with backoff on 503/5xx — handles server busy gracefully",
-      "Immediate webhook ack (202) — prevents caller timeout (Slack 3s, Cloudflare 100s)",
-      "Timeout set to 600s (10 min) — matches API server timeout",
-      "Batching with interval — prevents overwhelming the API with concurrent requests",
-      "Error routing — success and failure paths handled separately",
-      "Slack alerts on failure — no silent failures in production",
-      "Poll loop with max attempts — prevents infinite polling",
-      "Upsert for vector DB — safe to re-run without duplicates"
-    ],
-    "api_endpoints": {
-      "POST /api/convert": "Sync: upload file, get markdown (timeout: 10 min)",
-      "POST /api/upload": "Async: upload, get job_id, poll /api/jobs/{id}",
-      "POST /api/upload/init": "Chunked: start session for files > 45MB",
-      "POST /api/upload/chunk/{id}": "Chunked: upload 45MB chunk",
-      "POST /api/upload/complete/{id}": "Chunked: reassemble and process",
-      "GET /api/jobs/{id}": "Poll job status (includes elapsed_seconds)",
-      "GET /api/download/{id}": "Download completed markdown",
-      "GET /api/debug/recent": "Last 100 conversions with timing",
-      "GET /api/debug/files": "Last 10 input files for debugging",
-      "GET /docs": "Interactive Swagger UI",
-      "GET /health": "Health check"
+    "myfiles_to_markdown_api": {
+      "POST /api/convert": {
+        "description": "Synchronous conversion — send a file, get markdown back",
+        "parameters": {
+          "file": "The document file (required)",
+          "output_format": "json or markdown (default: markdown)",
+          "ai_enhancement": "true/false — adds AI summary, description, tags (default: true)",
+          "ai_image_processing": "true/false — AI vision for image descriptions (default: true)"
+        },
+        "response_json": "{ filename, output_filename, markdown, status }",
+        "timeout": "10 minutes server-side. Set client to 600000ms.",
+        "errors": "415=unsupported format, 422=missing file, 503=server busy (retry), 504=timeout"
+      },
+      "POST /api/upload": {
+        "description": "Async upload — returns immediately with job_id for polling",
+        "parameters": "Same as /api/convert, but field name is files[] (supports multiple)",
+        "response": "{ message, job_ids[], skipped[], skipped_reason }"
+      },
+      "GET /api/jobs/{id}": {
+        "description": "Poll job status",
+        "response": "{ id, filename, status, created_at, started_at, completed_at, elapsed_seconds, error }"
+      },
+      "GET /api/download/{id}": {
+        "description": "Download completed markdown file"
+      },
+      "GET /api/debug/recent": {
+        "description": "Last 100 conversions with timing — for monitoring dashboards"
+      },
+      "GET /health": {
+        "description": "Returns { status: 'healthy', version: '2.2.0' }"
+      }
     },
-    "supported_formats": ["pdf", "docx", "pptx", "html", "csv", "xlsx", "xls", "png", "jpg", "jpeg", "tiff", "bmp", "gif", "webp", "ipynb", "eml", "msg", "mbox"]
+    "supported_formats": {
+      "documents": ["pdf", "docx", "pptx", "html", "htm"],
+      "spreadsheets": ["csv", "xlsx", "xls"],
+      "images": ["png", "jpg", "jpeg", "tiff", "tif", "bmp", "gif", "webp"],
+      "notebooks": ["ipynb"],
+      "email": ["eml", "msg", "mbox"]
+    },
+    "markdown_output": {
+      "format": "YAML frontmatter + markdown body",
+      "frontmatter_fields": {
+        "always": ["title", "source_file", "source_type", "processed"],
+        "with_ai": ["summary", "description", "tags", "word_count"],
+        "format_specific": ["page_count (pdf/pptx)", "rows/columns (csv/xlsx)", "sheet_names (xlsx)", "width/height (images)"]
+      },
+      "obsidian_compatible": true,
+      "image_embeds": "![[attachments/filename_img_001.png]]"
+    }
   }
 }

@@ -33,16 +33,19 @@ docker exec myfiles_web python -m pytest /app/tests/ --cov --cov-config=/app/.co
 
 ## Architecture
 
-FastAPI app in Docker (`src/web_app.py`) with GPU access (NVIDIA runtime). Ollama runs on a separate host for AI inference. Docling runs on CPU to avoid VRAM conflicts.
+FastAPI app in Docker (`src/web_app.py`) with GPU access (NVIDIA runtime). Docling uses local GPU (RTX 4070) for layout analysis. Ollama runs on a separate host for AI inference.
 
 ### API Endpoints
 
 - `POST /api/convert` — sync: upload file, get markdown back
 - `POST /api/upload` — async: upload file(s), get job ID(s), poll for completion
 - `POST /api/upload/init` + `/chunk/{id}` + `/complete/{id}` — chunked upload for files >45MB (Cloudflare tunnel safe)
-- `GET /api/jobs/{id}` — poll job status
+- `GET /api/jobs/{id}` — poll job status (includes `elapsed_seconds`)
 - `GET /api/download/{id}` — download completed markdown
-- `GET /docs` — Swagger UI (auto-generated)
+- `GET /api/debug/recent` — last 100 conversions with timing, status, file size
+- `GET /api/debug/files` — last 10 input files kept for debugging
+- `GET /docs` — Swagger UI (auto-generated from code)
+- `GET /openapi.json` — OpenAPI 3.1 spec (auto-generated)
 - `GET /health` — health check
 
 ### Processing Pipeline
@@ -57,7 +60,7 @@ FastAPI app in Docker (`src/web_app.py`) with GPU access (NVIDIA runtime). Ollam
 
 ### Key Design Decisions
 
-- **Docling on CPU** (`DOCLING_DEVICE=cpu`): Prevents CUDA OOM when Ollama and Docling share the same GPU
+- **Docling on GPU** (`DOCLING_DEVICE=cuda`): Uses local RTX 4070 for layout analysis. Ollama runs on separate host to avoid VRAM conflicts.
 - **UUID-prefixed file paths**: Prevents filename collisions between concurrent users
 - **Concurrency semaphore** (3 max): Prevents GPU/RAM exhaustion under load
 - **Chunked uploads** (45MB chunks): Works within Cloudflare tunnel's 100MB limit

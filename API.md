@@ -379,14 +379,54 @@ All converted documents produce markdown with YAML frontmatter. When AI enhancem
 
 ---
 
+## Debug / Observability
+
+### `GET /api/debug/recent` — Recent Conversions
+
+Last 100 conversions with performance timing. For troubleshooting.
+
+```json
+{
+  "conversions": [
+    {
+      "file": "report.pdf",
+      "format": "pdf",
+      "size": 3020396,
+      "output_size": 17837,
+      "status": "completed",
+      "elapsed": 55.08,
+      "ai": false,
+      "timestamp": "2026-03-26T05:49:04.123456"
+    }
+  ],
+  "count": 1
+}
+```
+
+### `GET /api/debug/files` — Debug File Retention
+
+Lists the last 10 input files kept on disk for debugging failed conversions.
+
+```json
+{
+  "debug_files": [
+    {"name": "20260326_053117_report.pdf", "size": 3020396, "modified": "2026-03-26T05:31:17"}
+  ],
+  "retention": 10
+}
+```
+
+---
+
 ## Rate Limits / Timeouts
 
-- No rate limiting is enforced
-- Synchronous `/api/convert` has a **5-minute server-side timeout** — returns 504 if exceeded
-- Large PDFs (80+ pages) use lightweight extraction mode automatically
-- Set HTTP client timeout to at least **120 seconds** for AI-enabled conversions (300s for large PDFs)
+- Max 3 concurrent conversions (returns 503 when full)
+- Synchronous `/api/convert` has a **10-minute server-side timeout** — returns 504 if exceeded
+- PDFs over 20 pages use lightweight extraction mode automatically (no table structure)
+- Set HTTP client timeout to at least **120 seconds** for small files, **600 seconds** for large PDFs
 - For large batches, use the async `/api/upload` flow instead
-- GPU acceleration (NVIDIA) is enabled — typical conversion times:
-  - Small docs (< 30 pages): seconds
-  - Large docs (30-80 pages): 30-90 seconds
-  - Very large docs (80+ pages): 2-5 minutes
+- GPU acceleration (NVIDIA RTX 4070) for Docling layout analysis — typical conversion times:
+  - Small docs (< 10 pages): seconds
+  - Medium docs (10-20 pages): 10-30 seconds
+  - Large docs (20+ pages): 30-90 seconds
+  - Very large PDFs (100+ pages): 2-5 minutes

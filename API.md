@@ -2,7 +2,9 @@
 
 **Base URL:** `http://localhost:3143`
 
-Converts documents to Obsidian-compatible markdown with optional AI enhancement (summaries, tags, image descriptions) powered by local Ollama.
+**Interactive docs:** `/docs` (Swagger UI) | `/openapi.json` (OpenAPI 3.1 spec)
+
+Converts documents to Obsidian-compatible markdown with optional AI enhancement (summaries, tags, image descriptions) powered by Ollama. FastAPI, multi-user safe, GPU accelerated, chunked uploads for Cloudflare tunnels.
 
 ## Supported File Formats
 
@@ -91,7 +93,9 @@ Document content in markdown...
 | `400` | No file provided or invalid request |
 | `413` | File exceeds 500 MB limit |
 | `415` | Unsupported file format (returns `supported_formats` list) |
+| `422` | Missing required field (no file attached) |
 | `500` | Conversion failed |
+| `503` | Server busy — too many concurrent conversions (max 3) |
 | `504` | Conversion timed out (5 min limit — file too large or complex) |
 
 #### Examples
@@ -188,32 +192,63 @@ curl -X POST http://localhost:3143/api/upload \
 
 ---
 
-### `GET /api/jobs` — List All Jobs
+### Chunked Upload (files > 45 MB)
 
-Returns all jobs and their current status.
+For files that exceed Cloudflare tunnel limits (~100MB), use the three-step chunked upload flow.
 
-#### Response `200`
+#### Step 1: `POST /api/upload/init`
 
-```json
-{
-  "jobs": [
-    {
-      "id": "179bf408-a96d-4f91-a2c0-30983a839c4d",
-      "filename": "report.pdf",
-      "status": "completed",
-      "created_at": "2026-03-24T18:20:34.631000",
-      "started_at": "2026-03-24T18:20:34.632000",
-      "completed_at": "2026-03-24T18:21:04.500000",
-      "output_file": "/app/output/report.md",
-      "output_filename": "report.md",
-      "ai_enhancement": true,
-      "ai_image_processing": true
-    }
-  ]
-}
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `filename` | string | Yes | Original filename |
+| `total_size` | integer | Yes | Total file size in bytes |
+| `total_chunks` | integer | Yes | Number of chunks |
+| `ai_enhancement` | string | No | `"true"` / `"false"` |
+
+Response: `{"upload_id": "uuid"}`
+
+#### Step 2: `POST /api/upload/chunk/{upload_id}`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `chunk_index` | integer | Yes | Zero-based chunk index |
+| `chunk` | file | Yes | Chunk binary data (max 50MB) |
+
+Response: `{"received": 2, "total": 3}`
+
+#### Step 3: `POST /api/upload/complete/{upload_id}`
+
+Reassembles chunks and starts background processing.
+
+Response: `{"job_id": "uuid", "filename": "report.pdf"}`
+
+#### Example
+
+```bash
+# Init
+UPLOAD_ID=$(curl -s -X POST http://localhost:3143/api/upload/init \
+  -F "filename=large_report.pdf" \
+  -F "total_size=80000000" \
+  -F "total_chunks=2" | jq -r '.upload_id')
+
+# Upload chunks (45MB each)
+curl -X POST "http://localhost:3143/api/upload/chunk/$UPLOAD_ID" \
+  -F "chunk_index=0" -F "chunk=@chunk_0.bin"
+curl -X POST "http://localhost:3143/api/upload/chunk/$UPLOAD_ID" \
+  -F "chunk_index=1" -F "chunk=@chunk_1.bin"
+
+# Complete
+JOB_ID=$(curl -s -X POST "http://localhost:3143/api/upload/complete/$UPLOAD_ID" | jq -r '.job_id')
+
+# Poll
+curl -s "http://localhost:3143/api/jobs/$JOB_ID"
 ```
 
 ---
+
+### `GET /api/jobs/{job_id}` — Get Job Status
+
+Returns the status of a specific job. Jobs are only accessible by ID (no list endpoint for multi-user privacy).
 
 ### `GET /api/jobs/{job_id}` — Get Job Status
 
@@ -299,24 +334,6 @@ done
 
 # 3. Download
 curl -s http://localhost:3143/api/download/$JOB_ID -o report.md
-```
-
----
-
-### `GET /api/stats` — Processing Statistics
-
-Returns aggregate job counts.
-
-#### Response `200`
-
-```json
-{
-  "total": 15,
-  "queued": 0,
-  "processing": 1,
-  "completed": 13,
-  "failed": 1
-}
 ```
 
 ---

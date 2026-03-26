@@ -4,65 +4,70 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MyFiles to Markdown converts office documents (PDF, DOCX, PPTX, HTML, CSV, XLSX, images, Jupyter notebooks, emails) to Obsidian-compatible markdown with local AI enhancement via Ollama. Everything runs in Docker containers — no cloud services.
+MyFiles to Markdown converts office documents (PDF, DOCX, PPTX, HTML, CSV, XLSX, images, Jupyter notebooks, emails) to Obsidian-compatible markdown with AI enhancement via Ollama. Runs as a FastAPI Docker container with GPU acceleration.
 
 ## Build & Run Commands
 
 ```bash
-# First-time setup (pulls Ollama + models, builds containers)
-./scripts/setup.sh
-
 # Build Docker containers
-make build
-# or: docker-compose build
+docker compose build
 
-# Convert a single file (most common workflow)
-./convert.sh document.pdf
-./convert.sh document.pdf output/custom-name.md
-make convert FILE=document.pdf
-
-# Batch convert everything in input/
-docker-compose up converter
-make run
-
-# Start the web UI (port 3143)
-docker-compose up web
+# Start the web UI + API (port 3143)
+docker compose up -d web
 
 # View logs
-make logs                    # all services
-make logs-converter          # converter only
+docker compose logs -f web
 
-# Stop / restart
-make stop
-make restart
+# Stop
+docker compose down web
 
-# Clean output and logs
-make clean
+# Run tests (from host, against live container)
+python3 -m pytest tests/test_e2e_comprehensive.py -v     # 71 E2E tests
+python3 -m pytest tests/test_e2e_api.py -v                # 32 API tests
+python3 -m pytest tests/test_e2e_browser.py -v            # 8 Playwright browser tests
+
+# Run unit tests (inside container)
+docker exec myfiles_web pip install pytest pytest-cov
+docker exec myfiles_web python -m pytest /app/tests/ --cov --cov-config=/app/.coveragerc
 ```
-
-There is no test suite. `make test` only validates docker-compose config.
 
 ## Architecture
 
-The app runs inside Docker. The `converter` service runs `src/main.py`; the `web` service runs `src/web_app.py` (Flask on port 5000, exposed as 3143). Both connect to a host-accessible Ollama instance for AI features.
+FastAPI app in Docker (`src/web_app.py`) with GPU access (NVIDIA runtime). Ollama runs on a separate host for AI inference. Docling runs on CPU to avoid VRAM conflicts.
+
+### API Endpoints
+
+- `POST /api/convert` — sync: upload file, get markdown back
+- `POST /api/upload` — async: upload file(s), get job ID(s), poll for completion
+- `POST /api/upload/init` + `/chunk/{id}` + `/complete/{id}` — chunked upload for files >45MB (Cloudflare tunnel safe)
+- `GET /api/jobs/{id}` — poll job status
+- `GET /api/download/{id}` — download completed markdown
+- `GET /docs` — Swagger UI (auto-generated)
+- `GET /health` — health check
 
 ### Processing Pipeline
 
-1. **`src/main.py` — `DocumentProcessor`**: Orchestrator. Routes files to the right converter by extension, runs AI enhancement, then writes output.
-2. **`src/converters/`**: Each converter extends `BaseConverter` (in `base_converter.py`) and implements `convert(file_path) -> DocumentContent`.
-   - `DoclingUnifiedConverter` (in `docling_converter.py`) — handles PDF, DOCX, PPTX, HTML via IBM's Docling library. This is the primary converter.
-   - Specialized converters: `CsvConverter`, `XlsxConverter`, `ImageConverter`, `JupyterConverter`, `EmailConverter`.
-3. **`src/ai_enhancer.py` — `AIEnhancer`**: Calls Ollama to generate summaries, tags, descriptions, and image analysis (vision models). Falls back gracefully if Ollama is unavailable.
-4. **`src/obsidian_writer.py` — `ObsidianWriter`**: Writes markdown with YAML frontmatter (title, tags, summary) and Obsidian-style image embeds (`![[attachments/...]]`).
-5. **`src/config_manager.py`**: Loads `config/config.yaml`.
+1. **`src/web_app.py`**: FastAPI endpoints, chunked upload, concurrency semaphore (max 3), UUID-prefixed paths for multi-user safety
+2. **`src/main.py` — `DocumentProcessor`**: Routes files to converters by extension, runs AI enhancement
+3. **`src/converters/`**: Each extends `BaseConverter`, implements `convert(path) -> DocumentContent`
+   - `DoclingUnifiedConverter` — PDF, DOCX, PPTX, HTML via IBM Docling (three-tier: fast/accurate/lite by page count)
+   - `CsvConverter`, `XlsxConverter`, `ImageConverter`, `JupyterConverter`, `EmailConverter`
+4. **`src/ai_enhancer.py`**: Ollama integration — summaries, tags, descriptions, vision
+5. **`src/obsidian_writer.py`**: Markdown output with YAML frontmatter, Obsidian image embeds, HTML entity unescaping
 
-### Key Data Type
+### Key Design Decisions
 
-`DocumentContent` (in `base_converter.py`) is the shared interchange format between converters and the writer. It holds `.text`, `.images`, `.metadata`, and `.title`.
+- **Docling on CPU** (`DOCLING_DEVICE=cpu`): Prevents CUDA OOM when Ollama and Docling share the same GPU
+- **UUID-prefixed file paths**: Prevents filename collisions between concurrent users
+- **Concurrency semaphore** (3 max): Prevents GPU/RAM exhaustion under load
+- **Chunked uploads** (45MB chunks): Works within Cloudflare tunnel's 100MB limit
+- **No job list endpoint**: Jobs only accessible by ID for multi-user privacy
 
 ### Configuration
 
-All settings live in `config/config.yaml` — Ollama host/model, supported formats, OCR settings, AI toggle, Obsidian frontmatter options. Paths are Docker-internal (`/app/input`, `/app/output`).
+`config/config.yaml` — Ollama host/model, supported formats, OCR, AI toggle, CSV/XLSX row limits, Docling table mode and page thresholds.
+
+`docker-compose.yml` — Set `OLLAMA_HOST` to your Ollama instance IP.
 
 ### Adding a New Converter
 
@@ -70,3 +75,11 @@ All settings live in `config/config.yaml` — Ollama host/model, supported forma
 2. Implement `convert(file_path) -> DocumentContent`
 3. Export from `src/converters/__init__.py`
 4. Add routing logic in `DocumentProcessor.process_file()` in `src/main.py`
+5. Add extension to `SUPPORTED_FORMATS` in `src/web_app.py`
+
+### Test Suite
+
+- 71 comprehensive E2E tests (input validation, conversion quality, edge cases, concurrency, security, performance)
+- 32 API-specific E2E tests
+- 8 Playwright browser tests
+- 119 unit tests (77% coverage on active code)

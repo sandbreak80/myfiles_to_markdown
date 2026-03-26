@@ -7,7 +7,7 @@ services:
     container_name: myfiles_converter
     runtime: nvidia
     environment:
-      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://192.168.50.253:11434
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
@@ -35,7 +35,7 @@ services:
     runtime: nvidia
     network_mode: host
     environment:
-      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://192.168.50.253:11434
       - PYTHONUNBUFFERED=1
       - APP_PORT=3143
       - NVIDIA_VISIBLE_DEVICES=all

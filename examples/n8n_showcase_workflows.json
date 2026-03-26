@@ -1,0 +1,533 @@
+{
+  "workflows": [
+    {
+      "name": "1. Simple Document Conversion",
+      "description": "Upload a single file and get markdown back. The most basic use case — trigger manually or from another workflow.",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "convert",
+            "responseMode": "lastNode"
+          },
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert to Markdown",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "respondWith": "json",
+            "responseBody": "={{ JSON.stringify({ filename: $json.filename, markdown: $json.markdown, status: $json.status }) }}"
+          },
+          "name": "Return Result",
+          "type": "n8n-nodes-base.respondToWebhook",
+          "position": [720, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": { "main": [[{ "node": "Convert to Markdown", "type": "main", "index": 0 }]] },
+        "Convert to Markdown": { "main": [[{ "node": "Return Result", "type": "main", "index": 0 }]] }
+      }
+    },
+    {
+      "name": "2. Email Attachment Processor",
+      "description": "Monitor a Gmail inbox for emails with attachments. Auto-convert PDF/DOCX/PPTX attachments to markdown and save to Google Drive.",
+      "nodes": [
+        {
+          "parameters": {
+            "pollTimes": { "item": [{ "mode": "everyMinute" }] },
+            "filters": { "hasAttachment": true }
+          },
+          "name": "Gmail Trigger",
+          "type": "n8n-nodes-base.gmailTrigger",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "operation": "getAll",
+            "messageId": "={{ $json.id }}"
+          },
+          "name": "Get Attachments",
+          "type": "n8n-nodes-base.gmail",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "conditions": {
+              "string": [{
+                "value1": "={{ $json.fileName }}",
+                "operation": "regex",
+                "value2": "\\.(pdf|docx|pptx|xlsx|csv|html)$"
+              }]
+            }
+          },
+          "name": "Filter Supported",
+          "type": "n8n-nodes-base.if",
+          "position": [720, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "json" : "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert to Markdown",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [960, 200]
+        },
+        {
+          "parameters": {
+            "operation": "upload",
+            "folderId": "={{ $env.GDRIVE_OUTPUT_FOLDER || 'root' }}",
+            "name": "={{ $json.output_filename }}",
+            "binaryData": false,
+            "fileContent": "={{ $json.markdown }}"
+          },
+          "name": "Save to Drive",
+          "type": "n8n-nodes-base.googleDrive",
+          "position": [1200, 200]
+        }
+      ],
+      "connections": {
+        "Gmail Trigger": { "main": [[{ "node": "Get Attachments", "type": "main", "index": 0 }]] },
+        "Get Attachments": { "main": [[{ "node": "Filter Supported", "type": "main", "index": 0 }]] },
+        "Filter Supported": { "main": [[{ "node": "Convert to Markdown", "type": "main", "index": 0 }]] },
+        "Convert to Markdown": { "main": [[{ "node": "Save to Drive", "type": "main", "index": 0 }]] }
+      }
+    },
+    {
+      "name": "3. RAG Knowledge Base Builder",
+      "description": "Bulk-convert documents into a structured knowledge base for RAG/LLM applications. Extracts text, AI summaries, and tags from each document, then stores in a vector database.",
+      "nodes": [
+        {
+          "parameters": {
+            "operation": "list",
+            "folderId": "={{ $env.GDRIVE_INPUT_FOLDER }}"
+          },
+          "name": "List Drive Files",
+          "type": "n8n-nodes-base.googleDrive",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "operation": "download",
+            "fileId": "={{ $json.id }}"
+          },
+          "name": "Download File",
+          "type": "n8n-nodes-base.googleDrive",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert & Enhance",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [720, 300]
+        },
+        {
+          "parameters": {
+            "mode": "manual",
+            "assignments": {
+              "assignments": [
+                { "name": "filename", "value": "={{ $json.filename }}", "type": "string" },
+                { "name": "markdown", "value": "={{ $json.markdown }}", "type": "string" },
+                { "name": "summary", "value": "={{ $json.markdown.match(/summary: ['\"]?(.*?)['\"]?\\n/)?.[1] || '' }}", "type": "string" },
+                { "name": "tags", "value": "={{ $json.markdown.match(/tags:\\n([\\s\\S]*?)\\n---/)?.[1] || '' }}", "type": "string" }
+              ]
+            }
+          },
+          "name": "Extract Metadata",
+          "type": "n8n-nodes-base.set",
+          "position": [960, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.VECTOR_DB_URL }}/upsert",
+            "sendBody": true,
+            "bodyParameters": {
+              "parameters": [
+                { "name": "id", "value": "={{ $json.filename }}" },
+                { "name": "content", "value": "={{ $json.markdown }}" },
+                { "name": "metadata", "value": "={{ JSON.stringify({ summary: $json.summary, tags: $json.tags, source: $json.filename }) }}" }
+              ]
+            }
+          },
+          "name": "Store in Vector DB",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [1200, 300]
+        }
+      ],
+      "connections": {
+        "List Drive Files": { "main": [[{ "node": "Download File", "type": "main", "index": 0 }]] },
+        "Download File": { "main": [[{ "node": "Convert & Enhance", "type": "main", "index": 0 }]] },
+        "Convert & Enhance": { "main": [[{ "node": "Extract Metadata", "type": "main", "index": 0 }]] },
+        "Extract Metadata": { "main": [[{ "node": "Store in Vector DB", "type": "main", "index": 0 }]] }
+      }
+    },
+    {
+      "name": "4. Slack Document Bot",
+      "description": "Users drop files in a Slack channel — bot converts them to markdown and replies with the result plus an AI summary.",
+      "nodes": [
+        {
+          "parameters": {
+            "event": "file_shared",
+            "channel": "={{ $env.SLACK_CHANNEL }}"
+          },
+          "name": "Slack File Trigger",
+          "type": "n8n-nodes-base.slackTrigger",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "operation": "get",
+            "fileId": "={{ $json.file_id }}"
+          },
+          "name": "Download from Slack",
+          "type": "n8n-nodes-base.slack",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert Document",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [720, 300]
+        },
+        {
+          "parameters": {
+            "channel": "={{ $env.SLACK_CHANNEL }}",
+            "text": "={{ '**Converted: ' + $json.filename + '**\\n\\n' + ($json.markdown.match(/summary: ['\"]?(.*?)['\"]?\\n/)?.[1] || 'Conversion complete') + '\\n\\n_Full markdown attached_' }}",
+            "attachments": [],
+            "otherOptions": {}
+          },
+          "name": "Reply in Slack",
+          "type": "n8n-nodes-base.slack",
+          "position": [960, 300]
+        }
+      ],
+      "connections": {
+        "Slack File Trigger": { "main": [[{ "node": "Download from Slack", "type": "main", "index": 0 }]] },
+        "Download from Slack": { "main": [[{ "node": "Convert Document", "type": "main", "index": 0 }]] },
+        "Convert Document": { "main": [[{ "node": "Reply in Slack", "type": "main", "index": 0 }]] }
+      }
+    },
+    {
+      "name": "5. Scheduled Report Converter",
+      "description": "Run daily at 6 AM — check a folder for new files, convert them, email the markdown summaries to stakeholders.",
+      "nodes": [
+        {
+          "parameters": {
+            "rule": { "interval": [{ "triggerAtHour": 6 }] }
+          },
+          "name": "Daily 6 AM",
+          "type": "n8n-nodes-base.scheduleTrigger",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "operation": "list",
+            "folderId": "={{ $env.GDRIVE_REPORTS_FOLDER }}"
+          },
+          "name": "List New Reports",
+          "type": "n8n-nodes-base.googleDrive",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "operation": "download",
+            "fileId": "={{ $json.id }}"
+          },
+          "name": "Download Report",
+          "type": "n8n-nodes-base.googleDrive",
+          "position": [720, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert with AI",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [960, 300]
+        },
+        {
+          "parameters": {
+            "fromEmail": "={{ $env.FROM_EMAIL }}",
+            "toEmail": "={{ $env.STAKEHOLDER_EMAILS }}",
+            "subject": "Daily Report Summary: {{ $json.filename }}",
+            "text": "={{ 'AI Summary:\\n\\n' + ($json.markdown.match(/summary: ['\"]?(.*?)['\"]?\\n/)?.[1] || 'See attached') + '\\n\\nTags: ' + ($json.markdown.match(/tags:\\n([\\s\\S]*?)\\n---/)?.[1] || 'none') }}"
+          },
+          "name": "Email Summary",
+          "type": "n8n-nodes-base.emailSend",
+          "position": [1200, 300]
+        }
+      ],
+      "connections": {
+        "Daily 6 AM": { "main": [[{ "node": "List New Reports", "type": "main", "index": 0 }]] },
+        "List New Reports": { "main": [[{ "node": "Download Report", "type": "main", "index": 0 }]] },
+        "Download Report": { "main": [[{ "node": "Convert with AI", "type": "main", "index": 0 }]] },
+        "Convert with AI": { "main": [[{ "node": "Email Summary", "type": "main", "index": 0 }]] }
+      }
+    },
+    {
+      "name": "6. Chunked Upload for Large Files",
+      "description": "Handle files over 45MB by splitting into chunks. Required when behind Cloudflare tunnels with 100MB upload limits.",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "convert-large",
+            "responseMode": "lastNode"
+          },
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "functionCode": "// Split file into 45MB chunks\nconst CHUNK_SIZE = 45 * 1024 * 1024;\nconst binary = items[0].binary.data;\nconst buffer = Buffer.from(binary.data, 'base64');\nconst totalChunks = Math.ceil(buffer.length / CHUNK_SIZE);\nconst chunks = [];\nfor (let i = 0; i < totalChunks; i++) {\n  chunks.push({\n    json: {\n      chunkIndex: i,\n      totalChunks,\n      totalSize: buffer.length,\n      filename: binary.fileName,\n      chunkData: buffer.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE).toString('base64')\n    }\n  });\n}\nreturn chunks;"
+          },
+          "name": "Split into Chunks",
+          "type": "n8n-nodes-base.function",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/upload/init",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formData", "name": "filename", "value": "={{ $json.filename }}" },
+                { "parameterType": "formData", "name": "total_size", "value": "={{ $json.totalSize }}" },
+                { "parameterType": "formData", "name": "total_chunks", "value": "={{ $json.totalChunks }}" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            }
+          },
+          "name": "Init Upload",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [720, 300],
+          "executeOnce": true
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/upload/chunk/{{ $('Init Upload').json.upload_id }}",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formData", "name": "chunk_index", "value": "={{ $json.chunkIndex }}" },
+                { "parameterType": "formBinaryData", "name": "chunk", "inputDataFieldName": "chunkBinary" }
+              ]
+            }
+          },
+          "name": "Upload Chunks",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [960, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/upload/complete/{{ $('Init Upload').json.upload_id }}"
+          },
+          "name": "Complete Upload",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [1200, 300],
+          "executeOnce": true
+        },
+        {
+          "parameters": {
+            "method": "GET",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/jobs/{{ $json.job_id }}",
+            "options": { "timeout": 5000 }
+          },
+          "name": "Poll Status",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [1440, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": { "main": [[{ "node": "Split into Chunks", "type": "main", "index": 0 }]] },
+        "Split into Chunks": { "main": [[{ "node": "Init Upload", "type": "main", "index": 0 }]] },
+        "Init Upload": { "main": [[{ "node": "Upload Chunks", "type": "main", "index": 0 }]] },
+        "Upload Chunks": { "main": [[{ "node": "Complete Upload", "type": "main", "index": 0 }]] },
+        "Complete Upload": { "main": [[{ "node": "Poll Status", "type": "main", "index": 0 }]] }
+      }
+    },
+    {
+      "name": "7. Multi-Format Batch Processor",
+      "description": "Process a mixed folder of PDFs, spreadsheets, presentations, and images. Route each format for optimal conversion settings.",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "batch-convert",
+            "responseMode": "lastNode"
+          },
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "conditions": {
+              "string": [{
+                "value1": "={{ $json.fileName }}",
+                "operation": "regex",
+                "value2": "\\.(pdf|docx|pptx)$"
+              }]
+            }
+          },
+          "name": "Is Document?",
+          "type": "n8n-nodes-base.if",
+          "position": [480, 300]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "true" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert with AI",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [720, 200]
+        },
+        {
+          "parameters": {
+            "method": "POST",
+            "url": "={{ $env.MD_API_URL || 'http://localhost:3143' }}/api/convert",
+            "sendBody": true,
+            "contentType": "multipart-form-data",
+            "bodyParameters": {
+              "parameters": [
+                { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+                { "parameterType": "formData", "name": "output_format", "value": "json" },
+                { "parameterType": "formData", "name": "ai_enhancement", "value": "false" }
+              ]
+            },
+            "options": { "timeout": 300000 }
+          },
+          "name": "Convert Fast (no AI)",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [720, 400]
+        },
+        {
+          "parameters": {},
+          "name": "Merge Results",
+          "type": "n8n-nodes-base.merge",
+          "position": [960, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": { "main": [[{ "node": "Is Document?", "type": "main", "index": 0 }]] },
+        "Is Document?": {
+          "main": [
+            [{ "node": "Convert with AI", "type": "main", "index": 0 }],
+            [{ "node": "Convert Fast (no AI)", "type": "main", "index": 0 }]
+          ]
+        },
+        "Convert with AI": { "main": [[{ "node": "Merge Results", "type": "main", "index": 0 }]] },
+        "Convert Fast (no AI)": { "main": [[{ "node": "Merge Results", "type": "main", "index": 1 }]] }
+      }
+    }
+  ],
+  "setup": {
+    "environment_variables": {
+      "MD_API_URL": "Your MyFiles to Markdown API URL (e.g., http://localhost:3143)",
+      "GDRIVE_INPUT_FOLDER": "Google Drive folder ID for input documents",
+      "GDRIVE_OUTPUT_FOLDER": "Google Drive folder ID for converted markdown",
+      "GDRIVE_REPORTS_FOLDER": "Google Drive folder ID for daily reports",
+      "SLACK_CHANNEL": "Slack channel ID for document bot",
+      "VECTOR_DB_URL": "Vector database API URL for RAG storage",
+      "STAKEHOLDER_EMAILS": "Comma-separated email list for report summaries",
+      "FROM_EMAIL": "Sender email for report notifications"
+    },
+    "api_reference": {
+      "sync_convert": "POST /api/convert — upload file, get markdown back immediately",
+      "async_upload": "POST /api/upload — upload file(s), get job ID(s), poll /api/jobs/{id}",
+      "chunked_init": "POST /api/upload/init — start chunked upload session",
+      "chunked_chunk": "POST /api/upload/chunk/{id} — upload 45MB chunk",
+      "chunked_complete": "POST /api/upload/complete/{id} — reassemble and process",
+      "job_status": "GET /api/jobs/{id} — poll job status",
+      "download": "GET /api/download/{id} — download completed markdown",
+      "health": "GET /health — service health check",
+      "swagger": "GET /docs — interactive API documentation"
+    },
+    "supported_formats": ["pdf", "docx", "pptx", "html", "csv", "xlsx", "xls", "png", "jpg", "jpeg", "tiff", "bmp", "gif", "webp", "ipynb", "eml", "msg", "mbox"]
+  }
+}

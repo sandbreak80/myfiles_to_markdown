@@ -2,7 +2,7 @@
 
 # Ollama Settings
 ollama:
-  host: "http://host.docker.internal:11434"
+  host: "http://192.168.50.253:11434"
   model: "llama3.2:latest"  # Change to your preferred model
   timeout: 300
   temperature: 0.7
@@ -41,8 +41,8 @@ processing:
   # Docling settings
   docling:
     table_mode: "fast"  # "fast" (default) or "accurate" - accurate is much slower but better for complex tables
-    large_pdf_page_threshold: 30  # PDFs above this use fast table mode
-    xlarge_pdf_page_threshold: 80  # PDFs above this skip table structure entirely (text-only extraction)
+    large_pdf_page_threshold: 20  # PDFs above this use fast table mode
+    xlarge_pdf_page_threshold: 50  # PDFs above this skip table structure entirely (text-only extraction)
 
   # CSV-specific settings
   csv:

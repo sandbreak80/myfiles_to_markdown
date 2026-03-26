@@ -39,7 +39,7 @@ services:
       - PYTHONUNBUFFERED=1
       - APP_PORT=3143
       - NVIDIA_VISIBLE_DEVICES=all
-      - DOCLING_DEVICE=cpu
+      - DOCLING_DEVICE=cuda
     volumes:
       - ./output:/app/output
       - ./config:/app/config

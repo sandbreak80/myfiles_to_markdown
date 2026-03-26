@@ -29,13 +29,11 @@ class DoclingUnifiedConverter(BaseConverter):
         """
         super().__init__(config)
 
-        # Force Docling to use CPU so Ollama gets full GPU VRAM for AI inference.
-        # Without this, Docling and Ollama fight for the same 12GB GPU and cause
-        # CUDA OOM errors on concurrent requests.
+        # Docling uses local GPU for layout analysis. Ollama runs on a separate host.
         import torch
         if torch.cuda.is_available():
-            os.environ.setdefault('DOCLING_DEVICE', 'cpu')
-            logger.info("Docling forced to CPU to preserve GPU VRAM for Ollama AI")
+            os.environ.setdefault('DOCLING_DEVICE', 'cuda')
+            logger.info(f"Docling using GPU: {torch.cuda.get_device_name(0)}")
 
         # Page thresholds for mode selection
         self.large_pdf_threshold = config.get('docling', {}).get('large_pdf_page_threshold', 30)

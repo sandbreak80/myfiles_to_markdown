@@ -21,14 +21,20 @@ docker compose logs -f web
 # Stop
 docker compose down web
 
-# Run tests (from host, against live container)
+# Run tests (from host, against live container on localhost:3143)
 python3 -m pytest tests/test_e2e_comprehensive.py -v     # 71 E2E tests
 python3 -m pytest tests/test_e2e_api.py -v                # 32 API tests
 python3 -m pytest tests/test_e2e_browser.py -v            # 8 Playwright browser tests
 
+# Run a single E2E test
+python3 -m pytest tests/test_e2e_api.py::test_name -v
+
 # Run unit tests (inside container)
 docker exec myfiles_web pip install pytest pytest-cov
 docker exec myfiles_web python -m pytest /app/tests/ --cov --cov-config=/app/.coveragerc
+
+# Run a single unit test inside container
+docker exec myfiles_web python -m pytest /app/tests/test_converters.py::TestClassName::test_name -v
 ```
 
 ## Architecture
@@ -70,7 +76,15 @@ FastAPI app in Docker (`src/web_app.py`) with GPU access (NVIDIA runtime). Docli
 
 `config/config.yaml` — Ollama host/model, supported formats, OCR, AI toggle, CSV/XLSX row limits, Docling table mode and page thresholds.
 
-`docker-compose.yml` — Set `OLLAMA_HOST` to your Ollama instance IP.
+`docker-compose.yml` — Set `OLLAMA_HOST` to your Ollama instance IP. Two services: `web` (FastAPI server, `network_mode: host`, port 3143) and `converter` (batch CLI mode). Both use NVIDIA runtime with `DOCLING_DEVICE=cuda`.
+
+### Volume Layout (inside container)
+
+- `/app/uploads/` — incoming files (UUID-prefixed), cleaned up after conversion
+- `/app/uploads/_api_tmp/` — async API temp files
+- `/app/uploads/_chunks/` — in-progress chunked uploads
+- `/app/output/` — completed markdown files (persisted to `./output/` on host)
+- `/app/logs/debug_files/` — last 10 input files kept for debugging (`/api/debug/files`)
 
 ### Adding a New Converter
 
@@ -82,6 +96,9 @@ FastAPI app in Docker (`src/web_app.py`) with GPU access (NVIDIA runtime). Docli
 
 ### Test Suite
 
+- **E2E tests** run from host against live container (`localhost:3143`) — container must be running
+- **Unit tests** run inside the container (`docker exec myfiles_web`) — test individual modules with mocked dependencies
+- `tests/conftest.py` — shared fixtures: `tmp_dir`, `sample_config`, `make_pdf`, `make_csv`, `make_image`, `make_xlsx`, `make_docx`
 - 71 comprehensive E2E tests (input validation, conversion quality, edge cases, concurrency, security, performance)
 - 32 API-specific E2E tests
 - 8 Playwright browser tests

@@ -7,7 +7,7 @@ services:
     container_name: myfiles_converter
     runtime: nvidia
     environment:
-      - OLLAMA_HOST=http://192.168.50.253:11434
+      - OLLAMA_HOST=http://oldpc.taild67c4f.ts.net:11434
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
@@ -32,11 +32,12 @@ services:
       dockerfile: Dockerfile
     container_name: myfiles_web
     command: python src/web_app.py
+    restart: unless-stopped
     runtime: nvidia
     ports:
       - "3143:3143"
     environment:
-      - OLLAMA_HOST=http://192.168.50.253:11434
+      - OLLAMA_HOST=http://oldpc.taild67c4f.ts.net:11434
       - PYTHONUNBUFFERED=1
       - APP_PORT=3143
       - NVIDIA_VISIBLE_DEVICES=all

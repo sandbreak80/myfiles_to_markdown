@@ -163,14 +163,17 @@ def process_file_job(job_id: str, file_path: Path,
         if not ai_enhancement:
             processor.ai_enabled = False
 
-        # Apply per-request docling overrides
-        if hasattr(processor, 'config') and 'docling' in processor.config.get('processing', {}):
-            docling_cfg = processor.config['processing']['docling']
-            docling_cfg['force_full_page_ocr'] = force_full_page_ocr
-            docling_cfg['table_mode'] = table_mode
-            docling_cfg['do_cell_matching'] = do_cell_matching
+        # Build per-request docling overrides
+        docling_overrides = None
+        if force_full_page_ocr or table_mode != "fast" or do_cell_matching:
+            docling_overrides = {
+                'force_full_page_ocr': force_full_page_ocr,
+                'table_mode': table_mode,
+                'do_cell_matching': do_cell_matching,
+            }
 
-        success = processor.process_file(file_path, enable_ai_images=ai_image_processing)
+        success = processor.process_file(file_path, enable_ai_images=ai_image_processing,
+                                         docling_overrides=docling_overrides)
         elapsed = time.time() - t0
 
         if success:
@@ -331,18 +334,20 @@ async def convert_file(
             if not ai_on:
                 processor.ai_enabled = False
 
-            # Apply per-request docling overrides
+            # Build per-request docling overrides
             ocr_on = force_full_page_ocr.lower() == "true"
             cell_match = do_cell_matching.lower() == "true"
             tbl_mode = table_mode.lower()
-            if hasattr(processor, 'config') and 'docling' in processor.config.get('processing', {}):
-                docling_cfg = processor.config['processing']['docling']
-                docling_cfg['force_full_page_ocr'] = ocr_on
-                docling_cfg['table_mode'] = tbl_mode
-                docling_cfg['do_cell_matching'] = cell_match
+            docling_overrides = None
+            if ocr_on or tbl_mode != "fast" or cell_match:
+                docling_overrides = {
+                    'force_full_page_ocr': ocr_on,
+                    'table_mode': tbl_mode,
+                    'do_cell_matching': cell_match,
+                }
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(processor.process_file, file_path, ai_img)
+                future = executor.submit(processor.process_file, file_path, ai_img, docling_overrides=docling_overrides)
                 try:
                     success = future.result(timeout=CONVERSION_TIMEOUT)
                 except concurrent.futures.TimeoutError:

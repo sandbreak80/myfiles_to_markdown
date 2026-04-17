@@ -10,7 +10,7 @@ import re
 from loguru import logger
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode, EasyOcrOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode, TesseractCliOcrOptions
 from PIL import Image
 import io
 
@@ -54,7 +54,7 @@ class DoclingUnifiedConverter(BaseConverter):
         pipeline_options.table_structure_options.do_cell_matching = do_cell_matching
         pipeline_options.table_structure_options.mode = table_mode
         if force_full_page_ocr:
-            pipeline_options.ocr_options = EasyOcrOptions(force_full_page_ocr=True)
+            pipeline_options.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
 
         # FAST converter for large PDFs (30-80 pages)
         fast_pipeline = PdfPipelineOptions()
@@ -62,13 +62,13 @@ class DoclingUnifiedConverter(BaseConverter):
         fast_pipeline.table_structure_options.do_cell_matching = False
         fast_pipeline.table_structure_options.mode = TableFormerMode.FAST
         if force_full_page_ocr:
-            fast_pipeline.ocr_options = EasyOcrOptions(force_full_page_ocr=True)
+            fast_pipeline.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
 
         # Lightweight converter for very large PDFs (80+ pages) — no table structure at all
         lite_pipeline = PdfPipelineOptions()
         lite_pipeline.do_table_structure = False
         if force_full_page_ocr:
-            lite_pipeline.ocr_options = EasyOcrOptions(force_full_page_ocr=True)
+            lite_pipeline.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
 
         self.converter = DocumentConverter(
             format_options={

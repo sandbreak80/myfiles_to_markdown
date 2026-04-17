@@ -41,6 +41,8 @@ processing:
   # Docling settings
   docling:
     table_mode: "fast"  # "fast" (default) or "accurate" - accurate is much slower but better for complex tables
+    force_full_page_ocr: false  # Force OCR on entire page - improves scanned docs (bills, forms) but slower
+    do_cell_matching: false  # Map table structure to PDF cells - fixes merged/duplicated columns in scanned tables
     large_pdf_page_threshold: 10  # PDFs above this use fast table mode
     xlarge_pdf_page_threshold: 20  # PDFs above this skip table structure entirely (text-only extraction)
 

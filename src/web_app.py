@@ -126,7 +126,9 @@ def _log_conversion(entry: dict):
 
 
 def process_file_job(job_id: str, file_path: Path,
-                     ai_enhancement: bool = True, ai_image_processing: bool = True):
+                     ai_enhancement: bool = True, ai_image_processing: bool = True,
+                     force_full_page_ocr: bool = False, table_mode: str = "fast",
+                     do_cell_matching: bool = False):
     """Process a file in the background with concurrency limiting."""
     original_filename = ""
     with jobs_lock:
@@ -161,7 +163,17 @@ def process_file_job(job_id: str, file_path: Path,
         if not ai_enhancement:
             processor.ai_enabled = False
 
-        success = processor.process_file(file_path, enable_ai_images=ai_image_processing)
+        # Build per-request docling overrides
+        docling_overrides = None
+        if force_full_page_ocr or table_mode != "fast" or do_cell_matching:
+            docling_overrides = {
+                'force_full_page_ocr': force_full_page_ocr,
+                'table_mode': table_mode,
+                'do_cell_matching': do_cell_matching,
+            }
+
+        success = processor.process_file(file_path, enable_ai_images=ai_image_processing,
+                                         docling_overrides=docling_overrides)
         elapsed = time.time() - t0
 
         if success:
@@ -276,6 +288,9 @@ async def convert_file(
     ai_enhancement: str = Form("true"),
     ai_image_processing: str = Form("true"),
     output_format: str = Form("markdown"),
+    force_full_page_ocr: str = Form("false"),
+    table_mode: str = Form("fast"),
+    do_cell_matching: str = Form("false"),
 ):
     """Synchronous conversion. Upload a file, get markdown back."""
     filename = file.filename or ""
@@ -319,8 +334,20 @@ async def convert_file(
             if not ai_on:
                 processor.ai_enabled = False
 
+            # Build per-request docling overrides
+            ocr_on = force_full_page_ocr.lower() == "true"
+            cell_match = do_cell_matching.lower() == "true"
+            tbl_mode = table_mode.lower()
+            docling_overrides = None
+            if ocr_on or tbl_mode != "fast" or cell_match:
+                docling_overrides = {
+                    'force_full_page_ocr': ocr_on,
+                    'table_mode': tbl_mode,
+                    'do_cell_matching': cell_match,
+                }
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(processor.process_file, file_path, ai_img)
+                future = executor.submit(processor.process_file, file_path, ai_img, docling_overrides=docling_overrides)
                 try:
                     success = future.result(timeout=CONVERSION_TIMEOUT)
                 except concurrent.futures.TimeoutError:
@@ -410,6 +437,9 @@ async def chunked_upload_init(
     total_chunks: int = Form(...),
     ai_enhancement: str = Form("true"),
     ai_image_processing: str = Form("true"),
+    force_full_page_ocr: str = Form("false"),
+    table_mode: str = Form("fast"),
+    do_cell_matching: str = Form("false"),
 ):
     if not _validate_ext(filename):
         raise HTTPException(status_code=415, detail={"error": "Unsupported file format", "supported_formats": SUPPORTED_FORMATS})
@@ -426,6 +456,9 @@ async def chunked_upload_init(
             "received_chunks": 0,
             "ai_enhancement": ai_enhancement.lower() == "true",
             "ai_image_processing": ai_image_processing.lower() == "true",
+            "force_full_page_ocr": force_full_page_ocr.lower() == "true",
+            "table_mode": table_mode.lower(),
+            "do_cell_matching": do_cell_matching.lower() == "true",
             "chunk_dir": str(chunk_dir), "created_at": datetime.now().isoformat(),
         }
 
@@ -493,6 +526,11 @@ async def chunked_upload_complete(upload_id: str):
     thread = threading.Thread(
         target=process_file_job,
         args=(job_id, file_path, upload["ai_enhancement"], upload["ai_image_processing"]),
+        kwargs={
+            "force_full_page_ocr": upload.get("force_full_page_ocr", False),
+            "table_mode": upload.get("table_mode", "fast"),
+            "do_cell_matching": upload.get("do_cell_matching", False),
+        },
     )
     thread.daemon = True
     thread.start()

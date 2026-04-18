@@ -77,6 +77,12 @@ class DocumentProcessor:
             'ipynb', 'eml', 'msg', 'mbox'
         ])
         
+        # Store full config for per-request overrides
+        self.config = self.config_manager.config
+        
+        # Store full config for per-request overrides
+        self.config = self.config_manager.config
+        
         logger.info("Initialization complete!")
     
     def _setup_logging(self):
@@ -125,7 +131,8 @@ class DocumentProcessor:
         
         return False
     
-    def process_file(self, file_path: Path, enable_ai_images: bool = True) -> bool:
+    def process_file(self, file_path: Path, enable_ai_images: bool = True,
+                     docling_overrides: dict = None) -> bool:
         """Process a single file.
         
         Args:
@@ -145,6 +152,15 @@ class DocumentProcessor:
                 logger.warning(f"Unsupported file type: {file_ext}")
                 return False
             
+            # If docling overrides provided, create a temporary converter
+            converter = self.unified_converter
+            if docling_overrides and file_ext in ['pdf', 'docx', 'pptx', 'html', 'htm']:
+                override_config = dict(self.processing_config)
+                override_config['docling'] = dict(override_config.get('docling', {}))
+                override_config['docling'].update(docling_overrides)
+                converter = DoclingUnifiedConverter(override_config)
+                logger.info(f"Using per-request docling overrides: {docling_overrides}")
+            
             # Route to appropriate converter based on file type
             if file_ext == 'csv':
                 content = self.csv_converter.convert(file_path)
@@ -158,7 +174,7 @@ class DocumentProcessor:
                 content = self.email_converter.convert(file_path)
             else:
                 # Use unified Docling converter for PDF, DOCX, PPTX, HTML
-                content = self.unified_converter.convert(file_path)
+                content = converter.convert(file_path)
             
             # AI enhancement if enabled
             ai_analysis = None

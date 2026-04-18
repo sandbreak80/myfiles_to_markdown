@@ -10,7 +10,7 @@ import re
 from loguru import logger
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode, TesseractCliOcrOptions
 from PIL import Image
 import io
 
@@ -40,24 +40,35 @@ class DoclingUnifiedConverter(BaseConverter):
         self.xlarge_pdf_threshold = config.get('docling', {}).get('xlarge_pdf_page_threshold', 80)
 
         # Default table mode from config
-        table_mode_str = config.get('docling', {}).get('table_mode', 'fast').upper()
+        docling_cfg = config.get('docling', {})
+        table_mode_str = docling_cfg.get('table_mode', 'fast').upper()
         table_mode = TableFormerMode.ACCURATE if table_mode_str == 'ACCURATE' else TableFormerMode.FAST
+
+        # OCR and cell matching settings
+        force_full_page_ocr = docling_cfg.get('force_full_page_ocr', False)
+        do_cell_matching = docling_cfg.get('do_cell_matching', False)
 
         # Standard converter with configured table mode
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_table_structure = True
-        pipeline_options.table_structure_options.do_cell_matching = False
+        pipeline_options.table_structure_options.do_cell_matching = do_cell_matching
         pipeline_options.table_structure_options.mode = table_mode
+        if force_full_page_ocr:
+            pipeline_options.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
 
         # FAST converter for large PDFs (30-80 pages)
         fast_pipeline = PdfPipelineOptions()
         fast_pipeline.do_table_structure = True
         fast_pipeline.table_structure_options.do_cell_matching = False
         fast_pipeline.table_structure_options.mode = TableFormerMode.FAST
+        if force_full_page_ocr:
+            fast_pipeline.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
 
         # Lightweight converter for very large PDFs (80+ pages) — no table structure at all
         lite_pipeline = PdfPipelineOptions()
         lite_pipeline.do_table_structure = False
+        if force_full_page_ocr:
+            lite_pipeline.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
 
         self.converter = DocumentConverter(
             format_options={
@@ -75,7 +86,7 @@ class DoclingUnifiedConverter(BaseConverter):
             }
         )
 
-        logger.info(f"Docling initialized (table mode: {table_mode_str}, large: >{self.large_pdf_threshold}p=FAST, xlarge: >{self.xlarge_pdf_threshold}p=LITE)")
+        logger.info(f"Docling initialized (table_mode={table_mode_str}, cell_matching={do_cell_matching}, full_page_ocr={force_full_page_ocr}, large: >{self.large_pdf_threshold}p=FAST, xlarge: >{self.xlarge_pdf_threshold}p=LITE)")
     
     def convert(self, file_path: Path) -> DocumentContent:
         """Convert document using Docling.

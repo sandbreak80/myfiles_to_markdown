@@ -7,6 +7,7 @@ with real file conversions (no mocks).
 import time
 import tempfile
 import csv
+import pytest
 import requests
 from pathlib import Path
 
@@ -262,12 +263,16 @@ class TestSyncConvertAPI:
                               data={'output_format': 'json', 'ai_enhancement': 'false'},
                               timeout=TIMEOUT)
             assert r.status_code == 200
-            # Check no leftover in _api_tmp or output
-            import subprocess
+            # Check no leftover in _api_tmp (needs docker access to the container)
+            import os, shutil, subprocess
+            if not shutil.which('docker'):
+                pytest.skip('docker CLI not available to inspect the container')
+            container = os.environ.get('CONTAINER_NAME', 'myfiles_web')
             result = subprocess.run(
-                ['docker', 'exec', 'myfiles_web', 'ls', '/app/uploads/_api_tmp/'],
+                ['docker', 'exec', container, 'ls', '/app/uploads/_api_tmp/'],
                 capture_output=True, text=True
             )
+            assert result.returncode == 0, result.stderr
             assert 'cleanup_test.csv' not in result.stdout
 
 

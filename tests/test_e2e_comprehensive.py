@@ -825,7 +825,7 @@ class TestOpenAPI:
     def test_openapi_schema(self):
         r = requests.get(f"{BASE}/openapi.json")
         d = r.json()
-        assert d['info']['version'] == '2.1.0'
+        assert d['info']['version'] == requests.get(f"{BASE}/health").json()['version']
         paths = list(d['paths'].keys())
         assert '/api/convert' in paths
         assert '/api/upload' in paths

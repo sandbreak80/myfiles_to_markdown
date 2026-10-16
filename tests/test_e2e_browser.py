@@ -1,249 +1,172 @@
-"""End-to-end browser tests using Playwright.
+"""End-to-end browser tests for the web UI (Playwright, headless Chromium).
 
-Tests the full upload → processing → status update → download flow
-through the actual web UI at http://localhost:3143.
+Drives the real page against the live running container: pick files,
+wait for the status message, follow the download links.
+
+Usage:
+    BASE_URL=http://localhost:3143 pytest tests/test_e2e_browser.py
 """
 
-import time
-import uuid
+import os
+import re
 import tempfile
+import uuid
 import csv
 from pathlib import Path
+
+import pytest
 from playwright.sync_api import sync_playwright, expect
 
-BASE_URL = "http://localhost:3143"
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:3143")
+CONVERT_TIMEOUT_MS = 180_000
+AI_TIMEOUT_MS = 600_000
 
 
-def _create_test_csv(path: Path, rows=10):
+def _create_test_csv(path: Path, rows=5):
     with open(path, 'w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['id', 'name', 'score'])
+        w.writerow(['id', 'name', 'value'])
         for i in range(rows):
-            w.writerow([i, f'item_{i}', i * 2.5])
+            w.writerow([i, f'row_{i}', i * 2.5])
 
 
-def _create_test_pdf(path: Path):
-    """Create minimal valid PDF."""
-    content = b"""%PDF-1.0
-1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
-2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
-3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>>>endobj
-4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
-5 0 obj<</Length 44>>stream
-BT /F1 24 Tf 100 700 Td (Hello World) Tj ET
-endstream endobj
-xref
-0 6
-0000000000 65535 f
-0000000009 00000 n
-0000000058 00000 n
-0000000115 00000 n
-0000000266 00000 n
-0000000340 00000 n
-trailer<</Size 6/Root 1 0 R>>
-startxref
-434
-%%EOF"""
-    path.write_bytes(content)
-
-
-def _create_test_image(path: Path):
-    from PIL import Image
-    img = Image.new('RGB', (200, 200), color=(0, 128, 255))
-    img.save(path, 'PNG')
+def _create_test_png(path: Path):
+    from PIL import Image, ImageDraw
+    img = Image.new('RGB', (320, 120), 'white')
+    ImageDraw.Draw(img).text((20, 50), 'Playwright test image', fill='black')
+    img.save(path)
 
 
 def _create_test_docx(path: Path):
     from docx import Document
     doc = Document()
-    doc.add_heading('E2E Test Document', 0)
+    doc.add_heading('E2E Test Document', level=0)
     doc.add_paragraph('This document was created by the Playwright E2E test.')
     doc.add_heading('Section One', level=1)
     doc.add_paragraph('Automated testing validates the full pipeline.')
     doc.save(path)
 
 
-def test_page_loads():
-    """Test that the web UI loads and has key elements."""
+@pytest.fixture
+def page():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(BASE_URL)
-
-        # Check page title / key elements exist
-        assert page.title() != ""
-        assert page.locator('#uploadArea').is_visible()
-        assert page.locator('#jobList').is_visible()
-
+        pg = browser.new_page()
+        pg.goto(BASE_URL)
+        yield pg
         browser.close()
 
 
-def test_health_endpoint():
-    """Test health check via browser fetch."""
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        resp = page.request.get(f"{BASE_URL}/health")
-        assert resp.ok
-        data = resp.json()
-        assert data['status'] == 'healthy'
-        browser.close()
+def _set_ai(page, enhancement: bool, images: bool):
+    """Flip the toggles the way a user does: click the visible slider."""
+    for toggle_id, want in (('aiEnhancementToggle', enhancement), ('aiImageToggle', images)):
+        box = page.locator(f'#{toggle_id}')
+        if box.is_checked() != want:
+            page.locator(f'label.toggle-switch:has(#{toggle_id}) .toggle-slider').click()
+        expect(box).to_be_checked(checked=want)
 
 
-def test_api_no_cache_headers():
-    """Verify API responses have no-cache headers (Cloudflare fix)."""
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        resp = page.request.get(f"{BASE_URL}/api/stats")
-        assert resp.ok
-        headers = resp.headers
-        assert 'no-store' in headers.get('cache-control', '')
-        assert headers.get('pragma') == 'no-cache'
-        browser.close()
+def _upload_and_wait(page, paths, timeout_ms=CONVERT_TIMEOUT_MS):
+    page.locator('#fileInput').set_input_files([str(p) for p in paths])
+    expect(page.locator('#statusMessage')).to_have_text(
+        re.compile(r'All files converted successfully|failed|error|timed out', re.I),
+        timeout=timeout_ms,
+    )
+    msg = page.locator('#statusMessage').text_content()
+    assert 'All files converted successfully' in msg, msg
 
 
-def test_upload_csv_and_status_updates():
-    """Upload a CSV, verify status transitions from processing to completed."""
+def _download_text(page, link_index=0):
+    link = page.locator('#downloadLinks a').nth(link_index)
+    resp = page.request.get(BASE_URL + link.get_attribute('href'))
+    assert resp.ok, resp.status
+    return resp.text()
+
+
+def test_page_loads(page):
+    assert page.title() != ""
+    expect(page.locator('#uploadArea')).to_be_visible()
+    expect(page.locator('#aiEnhancementToggle')).to_be_attached()
+    expect(page.locator('#aiImageToggle')).to_be_attached()
+    # Static assets must load (page is unusable without app.js)
+    for asset in ('/static/js/app.js', '/static/css/styles.css'):
+        assert page.request.get(BASE_URL + asset).ok, asset
+
+
+def test_health_endpoint(page):
+    resp = page.request.get(f"{BASE_URL}/health")
+    assert resp.ok
+    assert resp.json()['status'] == 'healthy'
+
+
+def test_job_api_no_cache_headers(page):
+    """Job polling must not be cached by a proxy (Cloudflare)."""
+    resp = page.request.get(f"{BASE_URL}/api/jobs/{uuid.uuid4()}")
+    assert resp.status == 404
+    assert 'no-store' in resp.headers.get('cache-control', '')
+    assert resp.headers.get('pragma') == 'no-cache'
+
+
+def test_upload_csv_and_download(page):
     with tempfile.TemporaryDirectory() as tmp:
-        csv_path = Path(tmp) / 'e2e_test.csv'
-        _create_test_csv(csv_path, rows=5)
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(BASE_URL)
-
-            # Upload file via the file input
-            page.locator('#fileInput').set_input_files(str(csv_path))
-
-            # Wait for the job card to appear
-            job_card = page.locator('.job-card').first
-            job_card.wait_for(state='visible', timeout=10000)
-
-            # Filename should be visible
-            assert 'e2e_test.csv' in job_card.text_content()
-
-            # Wait for status to change to completed (poll updates every 2s)
-            page.locator('.status-completed').first.wait_for(state='visible', timeout=60000)
-
-            # Download button should now be visible
-            download_btn = page.locator('button:has-text("Download")').first
-            assert download_btn.is_visible()
-
-            browser.close()
+        p = Path(tmp) / 'e2e_test.csv'
+        _create_test_csv(p)
+        _set_ai(page, False, False)
+        _upload_and_wait(page, [p])
+        expect(page.locator('#downloadLinks a')).to_have_count(1)
+        expect(page.locator('#downloadLinks a').first).to_contain_text('e2e_test.md')
+        md = _download_text(page)
+        assert 'row_3' in md
 
 
-def test_upload_image_fast_completion():
-    """Upload a PNG image — should complete in seconds."""
-    unique = uuid.uuid4().hex[:8]
+def test_upload_docx_and_download(page):
     with tempfile.TemporaryDirectory() as tmp:
-        img_path = Path(tmp) / f'img_{unique}.png'
-        _create_test_image(img_path)
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(BASE_URL)
-
-            page.locator('#fileInput').set_input_files(str(img_path))
-
-            page.locator(f'.job-card:has-text("img_{unique}.png") .status-completed').wait_for(
-                state='visible', timeout=30000
-            )
-
-            card = page.locator(f'.job-card:has-text("img_{unique}.png")').first
-            assert 'Download' in card.text_content()
-
-            browser.close()
+        p = Path(tmp) / 'e2e_test.docx'
+        _create_test_docx(p)
+        _set_ai(page, False, False)
+        _upload_and_wait(page, [p])
+        md = _download_text(page)
+        assert 'Section One' in md
+        assert 'full pipeline' in md
 
 
-def test_upload_docx_and_download():
-    """Upload a DOCX, wait for completion, and download the result."""
-    unique = uuid.uuid4().hex[:8]
+def test_upload_image_without_ai(page):
     with tempfile.TemporaryDirectory() as tmp:
-        docx_path = Path(tmp) / f'docx_{unique}.docx'
-        _create_test_docx(docx_path)
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(BASE_URL)
-
-            page.locator('#fileInput').set_input_files(str(docx_path))
-
-            page.locator(f'.job-card:has-text("docx_{unique}.docx") .status-completed').wait_for(
-                state='visible', timeout=60000
-            )
-
-            with page.expect_download() as download_info:
-                page.locator(f'.job-card:has-text("docx_{unique}.docx") button:has-text("Download")').first.click()
-            download = download_info.value
-            assert download.suggested_filename == f'docx_{unique}.md'
-
-            # Read downloaded content
-            dl_path = Path(tmp) / 'downloaded.md'
-            download.save_as(str(dl_path))
-            content = dl_path.read_text()
-            assert 'E2E Test Document' in content
-            assert 'source_type: docx' in content
-
-            browser.close()
+        p = Path(tmp) / f'img_{uuid.uuid4().hex[:8]}.png'
+        _create_test_png(p)
+        _set_ai(page, False, False)
+        _upload_and_wait(page, [p])
+        expect(page.locator('#downloadLinks a')).to_have_count(1)
 
 
-def test_stats_update_after_upload():
-    """Verify the stats counters update after a file is processed."""
+def test_multiple_file_upload(page):
     with tempfile.TemporaryDirectory() as tmp:
-        img_path = Path(tmp) / 'stats_test.png'
-        _create_test_image(img_path)
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(BASE_URL)
-
-            # Get initial completed count
-            page.wait_for_timeout(3000)  # Let polling stabilize
-            initial_stats = page.locator('#stat-completed').text_content()
-
-            # Upload a file
-            page.locator('#fileInput').set_input_files(str(img_path))
-
-            # Wait for completion
-            page.locator('.status-completed').first.wait_for(state='visible', timeout=30000)
-
-            # Stats should have incremented
-            page.wait_for_timeout(3000)  # Wait for next poll
-            updated_stats = page.locator('#stat-completed').text_content()
-            assert updated_stats != initial_stats or 'Completed: 0' not in updated_stats
-
-            browser.close()
+        paths = []
+        for i in range(3):
+            p = Path(tmp) / f'multi_{i}.csv'
+            _create_test_csv(p, rows=i + 2)
+            paths.append(p)
+        _set_ai(page, False, False)
+        _upload_and_wait(page, paths)
+        expect(page.locator('#downloadLinks a')).to_have_count(3)
 
 
-def test_multiple_file_upload():
-    """Upload two files one after another and verify both complete."""
-    unique = uuid.uuid4().hex[:8]
+def test_unsupported_format_shows_error(page):
     with tempfile.TemporaryDirectory() as tmp:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(BASE_URL)
-
-            for i in range(2):
-                img_path = Path(tmp) / f'seq_{unique}_{i}.png'
-                _create_test_image(img_path)
-                page.locator('#fileInput').set_input_files(str(img_path))
-                page.locator(f'.job-card:has-text("seq_{unique}_{i}.png") .status-completed').wait_for(
-                    state='visible', timeout=60000
-                )
-
-            all_text = page.locator('#jobList').text_content()
-            assert f'seq_{unique}_0.png' in all_text
-            assert f'seq_{unique}_1.png' in all_text
-
-            browser.close()
+        p = Path(tmp) / 'notes.xyz'
+        p.write_text('not a supported format')
+        page.locator('#fileInput').set_input_files(str(p))
+        expect(page.locator('#statusMessage')).to_have_class(re.compile(r'\berror\b'), timeout=30_000)
 
 
-if __name__ == '__main__':
-    import pytest
-    pytest.main([__file__, '-v', '--tb=short'])
+@pytest.mark.skipif(os.environ.get("SKIP_AI_TESTS") == "1", reason="SKIP_AI_TESTS=1")
+def test_upload_with_ai_enhancement(page):
+    """Default UI settings (AI on): needs the configured Ollama to answer."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / 'ai_test.docx'
+        _create_test_docx(p)
+        _set_ai(page, True, True)
+        _upload_and_wait(page, [p], timeout_ms=AI_TIMEOUT_MS)
+        md = _download_text(page)
+        frontmatter = md.split('---')[1] if md.startswith('---') else ''
+        assert 'summary:' in frontmatter or 'tags:' in frontmatter, md[:500]

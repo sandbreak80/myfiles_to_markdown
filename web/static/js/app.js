@@ -43,7 +43,9 @@ function addDownloadLink(filename, jobId) {
     links.appendChild(link);
 }
 
-async function handleFiles(files) {
+async function handleFiles(fileList) {
+    // Copy first: the input clears its live FileList right after this is called.
+    const files = Array.from(fileList);
     const uploadArea = document.getElementById('uploadArea');
     document.getElementById('downloadLinks').innerHTML = '';
 

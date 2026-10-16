@@ -222,13 +222,13 @@ def process_file_job(job_id: str, file_path: Path,
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("MyFiles to Markdown API v2.2.0 starting")
+    logger.info("MyFiles to Markdown API v2.2.1 starting")
     yield
     logger.info("Shutting down")
 
 app = FastAPI(
     title="MyFiles to Markdown API",
-    version="2.2.0",
+    version="2.2.1",
     description="Convert documents to Obsidian-compatible markdown with AI enhancement. Multi-user safe.",
     lifespan=lifespan,
 )
@@ -277,7 +277,7 @@ async def index():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "myfiles-to-markdown", "version": "2.2.0"}
+    return {"status": "healthy", "service": "myfiles-to-markdown", "version": "2.2.1"}
 
 
 # ─── Sync Convert ───────────────────────────────────────────────

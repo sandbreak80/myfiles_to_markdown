@@ -7,7 +7,7 @@ services:
     container_name: myfiles_converter
     runtime: nvidia
     environment:
-      - OLLAMA_HOST=http://oldpc.taild67c4f.ts.net:11434
+      - OLLAMA_HOST=http://100.66.178.79:11434  # ubuntu-ms-7e62 Tailscale IP (MagicDNS names do not resolve inside containers)
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
@@ -37,7 +37,7 @@ services:
     ports:
       - "3143:3143"
     environment:
-      - OLLAMA_HOST=http://oldpc.taild67c4f.ts.net:11434
+      - OLLAMA_HOST=http://100.66.178.79:11434  # ubuntu-ms-7e62 Tailscale IP (MagicDNS names do not resolve inside containers)
       - PYTHONUNBUFFERED=1
       - APP_PORT=3143
       - NVIDIA_VISIBLE_DEVICES=all

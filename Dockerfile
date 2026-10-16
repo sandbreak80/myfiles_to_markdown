@@ -22,6 +22,10 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
+# Install torch built against CUDA 12.8 first (host driver is 12.8, RTX 5070 Blackwell sm_120).
+# Installing before requirements.txt so docling sees torch already satisfied and doesn't pull cu130.
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 

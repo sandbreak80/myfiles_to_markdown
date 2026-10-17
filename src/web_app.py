@@ -245,8 +245,17 @@ app.mount("/static", StaticFiles(directory="/app/web/static"), name="static")
 
 # ─── Request logging middleware ──────────────────────────────────
 
+def _client_ip(request: Request) -> str:
+    """Real client IP; behind the Cloudflare tunnel every request comes from cloudflared."""
+    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+
+
 @app.middleware("http")
 async def log_and_no_cache(request: Request, call_next):
+    # Debug endpoints list other users' uploads; keep them off the public internet.
+    if request.url.path.startswith("/api/debug") and "cf-connecting-ip" in request.headers:
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
     t0 = time.time()
     response = await call_next(request)
     elapsed = time.time() - t0
@@ -256,7 +265,7 @@ async def log_and_no_cache(request: Request, call_next):
             response.headers[k] = v
 
     if request.url.path.startswith("/api/") and request.url.path != "/api/jobs":
-        logger.info(f"HTTP | {request.method} {request.url.path} | {response.status_code} | {elapsed:.3f}s | {request.client.host if request.client else 'unknown'}")
+        logger.info(f"HTTP | {request.method} {request.url.path} | {response.status_code} | {elapsed:.3f}s | {_client_ip(request)}")
 
     if request.url.path.startswith("/static/"):
         for k, v in _no_cache_headers().items():
